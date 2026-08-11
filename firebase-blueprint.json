@@ -1,0 +1,25 @@
+{
+  "collections": {
+    "users": {
+      "title": "Users",
+      "description": "User profile records",
+      "documents": {
+        "userId": {
+          "email": "string",
+          "displayName": "string",
+          "createdAt": "timestamp"
+        }
+      }
+    },
+    "workspaces": {
+      "title": "Workspaces",
+      "description": "User personal workspace state including missions, habits, stats, and journals",
+      "documents": {
+        "userId": {
+          "userId": "string",
+          "updatedAt": "timestamp"
+        }
+      }
+    }
+  }
+}
