@@ -6,6 +6,20 @@ export interface RecoveryEvent {
   source?: 'mission' | 'emergency_reset';
 }
 
+export type MissionState = 'PLANNED' | 'ACTIVE' | 'COMPLETED' | 'MISSED';
+export type MissionPriority = 'PRIMARY' | 'SECONDARY' | 'BONUS';
+
+export interface ExecutionStats {
+  totalMissionsCreated: number;
+  totalMissionsCompleted: number;
+  totalMissionsMissed: number;
+  executionRate: number; // 0-100 percentage
+  dailyCompletedCount: number;
+  weeklyCompletedCount: number;
+  totalFocusMinutes: number;
+  totalSessionsCompleted: number;
+}
+
 export interface UserProfile {
   name: string;
   title: string;
@@ -19,12 +33,18 @@ export interface UserProfile {
   joinedDate: string;
   lastAppOpenDate?: string;
   lastMissionCompletedDate?: string;
+  lastActiveDate?: string;
+  lastActionType?: StreakActionType;
   recoveryEvents?: RecoveryEvent[];
   avgRecoveryDays?: number;
   fastestRecoveryDays?: number;
   trialStartDate?: string; // ISO string e.g. "2026-08-09T08:00:00.000Z"
   subscriptionStatus?: 'trial' | 'active' | 'expired';
   subscriptionPlan?: 'monthly' | 'annual' | 'pro';
+  executionStats?: ExecutionStats;
+  totalFocusMinutes?: number;
+  totalSessionsCompleted?: number;
+  executionRate?: number;
 }
 
 export interface HabitRing {
@@ -40,13 +60,24 @@ export interface HabitRing {
 
 export interface Mission {
   id: string;
-  type: 'PRIMARY' | 'SECONDARY' | 'BONUS';
   title: string;
   description: string;
-  completed: boolean;
+  category?: string; // e.g. 'Focus', 'Health', 'Discipline', 'Mind', 'Fitness', 'Work', 'Personal'
+  priority?: MissionPriority; // 'PRIMARY' | 'SECONDARY' | 'BONUS'
+  type?: 'PRIMARY' | 'SECONDARY' | 'BONUS'; // backward compatibility
+  state?: MissionState; // 'PLANNED' | 'ACTIVE' | 'COMPLETED' | 'MISSED'
+  completed: boolean; // true when state === 'COMPLETED'
   xpReward: number;
   durationMinutes?: number;
   targetAttribute?: string;
+  dueDate?: string; // YYYY-MM-DD
+  dueTime?: string; // HH:MM (24h)
+  createdAt?: string; // ISO string
+  startedAt?: string; // ISO string
+  completedAt?: string; // ISO string (recorded completion time)
+  completedDate?: string; // YYYY-MM-DD (local completion date)
+  archivedAt?: string; // ISO string when archived
+  isArchived?: boolean;
   statBoost?: {
     stat: string;
     amount: number;
@@ -92,6 +123,7 @@ export interface ResetLog {
 
 export interface FocusSessionLog {
   id: string;
+  missionId?: string;
   missionTitle: string;
   durationMinutes: number;
   date: string; // ISO string e.g. "2026-08-08T00:23:00.000Z"
@@ -105,6 +137,85 @@ export interface HeatmapDay {
   xpEarned: number;
 }
 
+export type RecoverySpeedCategory = 'SNAP_BACK' | 'SLOW_BOUNCE' | 'RE_ACTIVATION' | 'NONE';
+
+export interface RecoveryBonusInfo {
+  recoveryGapDays: number; // The number of missed calendar days (downtime duration)
+  category: RecoverySpeedCategory; // SNAP_BACK, SLOW_BOUNCE, RE_ACTIVATION, NONE
+  multiplier: number; // e.g., 0.50 (+50%), 0.30 (+30%), 0.10 (+10%), 0 (0%)
+  bonusXp: number; // calculated bonus XP amount
+  totalXp: number; // base XP + bonus XP
+  title: string;
+  badgeLabel: string;
+  message: string;
+}
+
+export type StreakEvaluationStatus = 'STARTED' | 'INCREMENTED' | 'MAINTAINED' | 'RESET';
+
+export type StreakActionType = 'MISSION' | 'EMERGENCY_RESET' | 'JOURNAL_LOG';
+
+/**
+ * Standard user streak tracking state model
+ */
+export interface UserStreakState {
+  userId?: string;
+  currentStreak: number;
+  longestStreak: number;
+  lastActiveDate: string; // ISO date string (YYYY-MM-DD or full timestamp)
+  lastActionType?: StreakActionType;
+  updatedAt?: string;
+}
+
+export interface UserStreakRecord {
+  userId: string;
+  currentStreak: number;
+  longestStreak: number;
+  lastCompletedDate: string; // YYYY-MM-DD in user's local timezone
+  lastActiveDate?: string; // Timestamp or YYYY-MM-DD
+  lastActionType?: StreakActionType;
+  updatedAt: string; // ISO UTC
+}
+
+export interface ActivityLogEntry {
+  id: string;
+  userId: string;
+  actionType: StreakActionType;
+  actionDetails?: string;
+  completedAt: string; // ISO UTC
+  userTimezone: string;
+}
+
+export interface MissionLogEntry {
+  id: string;
+  userId: string;
+  missionId: string;
+  completedAt: string; // ISO UTC
+  userTimezone: string;
+}
+
+export interface StreakUpdateResult {
+  userId: string;
+  actionType: StreakActionType;
+  currentStreak: number;
+  longestStreak: number;
+  lastActiveDate: string; // YYYY-MM-DD in local timezone
+  status: StreakEvaluationStatus;
+  message: string;
+  recoveryBonus?: RecoveryBonusInfo | null;
+  actionDetails?: string;
+}
+
+export interface StreakCompletionResult {
+  userId: string;
+  missionId: string;
+  currentStreak: number;
+  longestStreak: number;
+  status: StreakEvaluationStatus;
+  lastCompletedDate: string;
+  message: string;
+  recoveryBonus?: RecoveryBonusInfo | null;
+}
+
 export interface ChatMessage {
   id: string;
   sender: 'user' | 'ai';
@@ -116,6 +227,7 @@ export interface RebuildOSState {
   user: UserProfile;
   habits: HabitRing[];
   missions: Mission[];
+  archivedMissions?: Mission[];
   identityStats: IdentityStat[];
   lifeAreas: LifeArea[];
   journalEntries: JournalEntry[];
@@ -123,7 +235,7 @@ export interface RebuildOSState {
   heatmap: HeatmapDay[];
   chatHistory: ChatMessage[];
   focusLogs?: FocusSessionLog[];
-  activeTab: 'home' | 'identity' | 'journal' | 'coach' | 'reset';
+  activeTab: 'home' | 'journal' | 'coach' | 'about' | 'reset';
   focusSession: {
     active: boolean;
     missionId?: string;

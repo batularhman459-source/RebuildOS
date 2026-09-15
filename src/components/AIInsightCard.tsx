@@ -1,147 +1,127 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Sparkles, RefreshCw, AlertTriangle } from 'lucide-react';
-import { UserProfile, Mission, HabitRing } from '../types';
+import { RefreshCw, Brain } from 'lucide-react';
+import { UserProfile, Mission, HabitRing, JournalEntry, FocusSessionLog, IdentityStat, HeatmapDay, ResetLog } from '../types';
 
 interface AIInsightCardProps {
   user: UserProfile;
   missions: Mission[];
   habits: HabitRing[];
+  journalEntries?: JournalEntry[];
+  focusLogs?: FocusSessionLog[];
+  identityStats?: IdentityStat[];
+  heatmap?: HeatmapDay[];
+  resetLogs?: ResetLog[];
 }
 
 export const AIInsightCard: React.FC<AIInsightCardProps> = ({
   user,
   missions,
   habits,
+  journalEntries = [],
+  focusLogs = [],
+  identityStats = [],
+  heatmap = [],
+  resetLogs = [],
 }) => {
   const [insight, setInsight] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
 
-  const completedMissionsCount = missions.filter((m) => m.completed).length;
-  const streakDays = user.streak || 1;
-  // Compute days of data collected
-  const daysOfData = Math.max(
-    streakDays,
-    completedMissionsCount >= 3 ? 3 : completedMissionsCount > 0 ? 2 : 1
-  );
-  const isDataSufficient = daysOfData >= 3;
-  const isFirstWeek = daysOfData < 7;
+  const completedMissionsCount = Array.isArray(missions) ? missions.filter(m => m.completed).length : 0;
+  const totalMissionsCount = Array.isArray(missions) ? missions.length : 0;
 
-  const fetchInsight = useCallback(async () => {
+  const fetchInsight = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     try {
       const response = await fetch('/api/insight', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user, missions, habits }),
+        body: JSON.stringify({
+          user,
+          missions,
+          habits,
+          journalEntries,
+          focusLogs,
+          identityStats,
+          heatmap,
+          resetLogs,
+          forceRefresh,
+        }),
       });
+      if (!response.ok) {
+        throw new Error(`Insight endpoint returned status ${response.status}`);
+      }
       const data = await response.json();
       if (data && data.insight) {
         setInsight(data.insight);
       } else {
-        if (!isDataSufficient) {
-          setInsight(
-            `Insufficient data for personalized AI results. Log activity for at least 3 days to unlock personalized insights! Current data: Day ${daysOfData} of 3.`
-          );
-        } else {
-          setInsight("You've been most productive before 11 AM over your recorded focus sessions.");
-        }
+        setInsight("No clear pattern yet. Keep showing up.");
       }
     } catch (err) {
-      console.error("Failed to fetch AI insight:", err);
-      if (!isDataSufficient) {
-        setInsight(
-          `Insufficient data for personalized AI results. Log activity for at least 3 days to unlock personalized insights! Current data: Day ${daysOfData} of 3.`
-        );
-      } else {
-        setInsight("You recover quickly after setbacks. Protect that daily habit discipline.");
-      }
+      console.warn("Notice: AI insight fetch fallback:", err);
+      setInsight("No clear pattern yet. Keep showing up.");
     } finally {
       setLoading(false);
     }
-  }, [user.level, user.streak, user.momentumScore, isDataSufficient, daysOfData]);
+  }, [
+    user?.level,
+    user?.streak,
+    user?.momentumScore,
+    user?.recoveryRate,
+    completedMissionsCount,
+    totalMissionsCount,
+    habits?.length,
+    journalEntries?.length,
+    focusLogs?.length,
+  ]);
 
   useEffect(() => {
-    fetchInsight();
+    fetchInsight(false);
   }, [fetchInsight]);
 
   return (
-    <div className="bg-black/60 backdrop-blur-2xl border border-white/10 rounded-[26px] p-4 sm:p-5 space-y-3 relative overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.5)] group before:absolute before:inset-x-0 before:top-0 before:h-[1px] before:bg-gradient-to-r before:from-transparent before:via-purple-500/40 before:to-transparent">
-      {/* Top Header Row */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
-            <Sparkles className="w-4 h-4" />
+    <div className="relative overflow-hidden rounded-[24px] sm:rounded-[28px] p-5 sm:p-6 bg-gradient-to-b from-white/[0.14] via-white/[0.07] to-white/[0.03] backdrop-blur-2xl border border-white/20 shadow-[inset_0_1px_1.5px_rgba(255,255,255,0.3),0_15px_35px_rgba(0,0,0,0.35)] transition-all text-white">
+      {/* Specular Top Rim Highlight */}
+      <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none z-10" />
+
+      <div className="relative z-10 space-y-3 sm:space-y-4">
+        {/* Minimal Header Row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-xl bg-white/10 border border-white/15 backdrop-blur-md flex items-center justify-center text-white/90 shadow-sm">
+              <Brain className="w-3.5 h-3.5 stroke-[2]" />
+            </div>
+            <span className="text-xs sm:text-sm font-medium tracking-wide text-white/90">
+              Pattern check
+            </span>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-xs font-mono font-bold tracking-wider text-neutral-300 uppercase">
-              AI INSIGHT
-            </h3>
-            {!isDataSufficient ? (
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                Data Gathering (Day {daysOfData}/3)
-              </span>
-            ) : isFirstWeek ? (
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                Daily Adaptive (Day {daysOfData}/7)
-              </span>
-            ) : (
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                AI Insight Active
-              </span>
-            )}
-          </div>
+
+          <button
+            type="button"
+            onClick={() => fetchInsight(true)}
+            disabled={loading}
+            title="Check again"
+            className="w-7 h-7 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 backdrop-blur-md flex items-center justify-center text-white/70 hover:text-white transition-all cursor-pointer active:scale-95 disabled:opacity-40"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 stroke-[2] ${loading ? 'animate-spin text-white' : ''}`} />
+          </button>
         </div>
 
-        <button
-          onClick={fetchInsight}
-          disabled={loading}
-          title="Refresh AI Analysis"
-          className="p-1.5 rounded-xl bg-white/5 border border-white/10 text-neutral-400 hover:text-white hover:bg-white/10 transition-all active:scale-95 disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-purple-400' : ''}`} />
-        </button>
-      </div>
-
-      {/* Main View: Dynamic Insight */}
-      <div className="min-h-[50px] flex flex-col justify-center space-y-2">
-        {loading ? (
-          <div className="space-y-2 w-full animate-pulse">
-            <div className="h-4 bg-white/10 rounded-md w-11/12"></div>
-            <div className="h-4 bg-white/5 rounded-md w-2/3"></div>
-          </div>
-        ) : !isDataSufficient ? (
-          <div className="space-y-2.5 bg-neutral-900/60 border border-amber-500/20 rounded-2xl p-3.5">
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-              <p className="text-xs sm:text-sm text-neutral-200 leading-relaxed font-sans">
-                You don't have sufficient data yet for personalized AI results. Complete missions and log daily entries for <strong className="text-amber-300 font-semibold">at least 3 days</strong> to unlock personalized insights!
-              </p>
+        {/* Insight Quote Body */}
+        <div className="min-h-[44px] flex flex-col justify-center">
+          {loading ? (
+            <div className="space-y-2 w-full animate-pulse py-1">
+              <div className="h-3.5 bg-white/10 rounded-lg w-10/12"></div>
+              <div className="h-3.5 bg-white/10 rounded-lg w-6/12"></div>
             </div>
-
-            {/* 3-Day Progress Bar */}
-            <div className="pt-1 space-y-1">
-              <div className="flex items-center justify-between text-[10px] font-mono text-neutral-400">
-                <span>DATA COLLECTION PROGRESS</span>
-                <span className="text-amber-400 font-bold">DAY {daysOfData} OF 3</span>
-              </div>
-              <div className="w-full h-2 bg-black/60 rounded-full overflow-hidden border border-white/10">
-                <div
-                  className="h-full bg-gradient-to-r from-amber-500 to-purple-500 transition-all duration-500 rounded-full"
-                  style={{ width: `${Math.min(100, Math.round((daysOfData / 3) * 100))}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        ) : (
-          <p className="text-sm sm:text-base font-medium text-neutral-100 leading-relaxed font-sans">
-            "{insight}"
-          </p>
-        )}
+          ) : (
+            <p className="text-xs sm:text-sm font-normal text-white/90 leading-relaxed font-sans">
+              "{insight || 'No clear pattern yet. Keep showing up.'}"
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
 };
+
 

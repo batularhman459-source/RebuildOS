@@ -1,6 +1,6 @@
 {
   "name": "RebuildOS",
-  "description": "Personal operating system focused on identity progression, momentum, and recovery.",
+  "description": "A personal system for getting your life back under control.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -13,6 +13,7 @@ import {
   Zap,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { LiquidMetalButton } from './ui/liquid-metal-button';
 
 interface EmergencyResetModalProps {
   onClose: () => void;
@@ -98,7 +99,7 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
       particleCount: 70,
       spread: 60,
       origin: { y: 0.6 },
-      colors: ['#F43F5E', '#10B981', '#3B82F6', '#EAB308'],
+      colors: ['#5E1473', '#FF00FF', '#FCCF3A', '#F43F5E'],
     });
     goToStep(4);
   };
@@ -118,7 +119,12 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
   const progressPercent = totalSeconds > 0 ? ((totalSeconds - timerSeconds) / totalSeconds) * 100 : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-2xl animate-in fade-in duration-200">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="reset-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-2xl animate-in fade-in duration-200 overscroll-contain"
+    >
       <div className="w-full max-w-md bg-gradient-to-b from-rose-950/70 via-[#0d070a] to-[#080406] border border-rose-500/20 rounded-3xl p-5 sm:p-7 space-y-5 relative shadow-[0_25px_60px_rgba(225,29,72,0.2)] overflow-hidden text-left max-h-[90vh] overflow-y-auto">
         {/* Deep Crimson Ambient Radial Glow */}
         <div className="absolute -top-24 -right-24 w-72 h-72 bg-rose-600/20 rounded-full blur-3xl pointer-events-none" />
@@ -131,18 +137,19 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
               <ShieldAlert className="w-4 h-4" />
             </div>
             <div>
-              <span className="text-xs font-mono font-bold tracking-wider text-rose-400 uppercase block">
+              <span id="reset-modal-title" className="text-xs font-mono font-bold tracking-wider text-rose-400 uppercase block">
                 Emergency Reset
               </span>
               <span className="text-[11px] text-neutral-400 font-sans">
-                Intervention & Recovery
+                Reset and get back on track
               </span>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors"
+            aria-label="Close"
+            className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-rose-400"
           >
             <X className="w-5 h-5" />
           </button>
@@ -194,8 +201,8 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
           <div className="space-y-5 relative z-10 animate-in fade-in duration-200">
             {/* Core Principle Quote */}
             <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/30 space-y-1.5">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-rose-400 font-bold block">
-                Core Principle
+              <span className="text-[10px] font-sans uppercase tracking-widest text-rose-400 font-bold block">
+                Keep in mind
               </span>
               <p className="text-xs sm:text-sm font-medium text-rose-100 italic leading-relaxed">
                 “You don’t need to fix everything. You just need to regain control of the next few minutes.”
@@ -204,8 +211,8 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
 
             {/* Reset Instructions */}
             <div className="space-y-2.5">
-              <h3 className="text-[11px] font-mono font-bold uppercase tracking-wider text-neutral-400">
-                Reset Instructions
+              <h3 className="text-[11px] font-sans font-bold uppercase tracking-wider text-neutral-400">
+                3 quick steps
               </h3>
 
               <div className="space-y-2 text-xs text-neutral-200">
@@ -227,19 +234,23 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
                   <div className="w-6 h-6 rounded-lg bg-rose-500/20 text-rose-300 flex items-center justify-center font-mono text-[11px] font-bold flex-shrink-0">
                     3
                   </div>
-                  <span>Choose ONE tiny actionable task to regain traction.</span>
+                  <span>Pick one small, simple task to break the friction.</span>
                 </div>
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => goToStep(2)}
-              className="w-full py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold font-mono transition-all shadow-lg shadow-rose-600/30 flex items-center justify-center gap-2 active:scale-95"
-            >
-              <span>Choose Tiny Task</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+            <div className="w-full flex justify-center pt-2">
+              <LiquidMetalButton
+                type="button"
+                size="md"
+                variant="rose"
+                width={240}
+                height={42}
+                onClick={() => goToStep(2)}
+                icon={<ArrowRight className="w-4 h-4" />}
+                label="Pick a small task"
+              />
+            </div>
           </div>
         )}
 
@@ -247,16 +258,16 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
         {step === 2 && (
           <div className="space-y-4 relative z-10 animate-in fade-in duration-200">
             <div>
-              <h3 className="text-sm sm:text-base font-bold text-white">Choose One Tiny Task</h3>
+              <h3 className="text-sm sm:text-base font-bold text-white">Pick one small task</h3>
               <p className="text-xs text-neutral-400 mt-0.5">
-                Keep it small so there is zero friction to begin.
+                Make it so small you can't talk yourself out of it.
               </p>
             </div>
 
             {/* Quick Presets */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider block">
-                Quick Action Suggestions
+              <label className="text-[10px] font-sans text-neutral-400 uppercase tracking-wider block">
+                Suggestions
               </label>
               <div className="flex flex-wrap gap-1.5">
                 {PRESETS.map((preset) => (
@@ -278,22 +289,22 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
 
             {/* Custom Input */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider block">
-                Or Type Custom Task
+              <label className="text-[10px] font-sans text-neutral-400 uppercase tracking-wider block">
+                Or write your own
               </label>
               <input
                 type="text"
                 value={taskName}
                 onChange={(e) => setTaskName(e.target.value)}
-                placeholder='e.g., "Write 2 lines of code", "Tidy desk"'
+                placeholder='e.g., "Clear desk", "Write 2 sentences"'
                 className="w-full bg-black/50 border border-white/15 focus:border-rose-500/60 rounded-2xl px-3.5 py-2.5 text-xs text-white placeholder-neutral-500 outline-none transition-all"
               />
             </div>
 
             {/* Duration Selector */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider block">
-                Sprint Duration
+              <label className="text-[10px] font-sans text-neutral-400 uppercase tracking-wider block">
+                Duration
               </label>
               <div className="grid grid-cols-3 gap-2">
                 {[5, 10, 15].map((mins) => (
@@ -307,7 +318,7 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
                         : 'bg-black/40 text-neutral-300 border-white/10 hover:bg-white/5'
                     }`}
                   >
-                    {mins}m Sprint
+                    {mins} mins
                   </button>
                 ))}
               </div>
@@ -321,14 +332,16 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
               >
                 ← Back
               </button>
-              <button
+              <LiquidMetalButton
                 type="button"
+                size="sm"
+                variant="rose"
+                width={150}
+                height={38}
                 onClick={handleStartSprint}
-                className="px-5 py-3 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold font-mono transition-all shadow-lg shadow-rose-600/30 flex items-center gap-2 active:scale-95"
-              >
-                <span>Start Session</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+                icon={<ArrowRight className="w-4 h-4" />}
+                label="Start timer"
+              />
             </div>
           </div>
         )}
@@ -338,7 +351,7 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
           <div className="space-y-5 relative z-10 text-center animate-in fade-in duration-200">
             <div className="space-y-1">
               <span className="text-[10px] font-mono text-rose-400 uppercase tracking-widest block font-bold">
-                RECOVERY SPRINT
+                QUICK FOCUS
               </span>
               <h3 className="text-sm sm:text-base font-bold text-white px-2 truncate">
                 {taskName || 'Micro Task'}
@@ -356,7 +369,7 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
                   {formatTime(timerSeconds)}
                 </span>
                 <span className="text-[10px] font-mono text-rose-300 uppercase tracking-wider mt-1 relative z-10">
-                  {timerActive ? 'Active Focus' : 'Paused'}
+                  {timerActive ? 'Focusing' : 'Paused'}
                 </span>
               </div>
             </div>
@@ -386,17 +399,21 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
             </div>
 
             {/* Complete Early Button */}
-            <button
-              type="button"
-              onClick={handleFinishTask}
-              className="w-full py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-mono font-bold transition-all shadow-lg flex items-center justify-center gap-2 active:scale-95"
-            >
-              <Check className="w-4 h-4" />
-              <span>Complete Task & Recover</span>
-            </button>
+            <div className="w-full flex justify-center pt-1">
+              <LiquidMetalButton
+                type="button"
+                size="md"
+                variant="purple"
+                width={250}
+                height={42}
+                onClick={handleFinishTask}
+                icon={<Check className="w-4 h-4" />}
+                label="Mark task complete"
+              />
+            </div>
 
             <p className="text-[11px] text-neutral-400 font-sans italic">
-              “Focus purely on this single task for a few minutes.”
+              “Just this one task. Nothing else right now.”
             </p>
           </div>
         )}
@@ -404,25 +421,25 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
         {/* STEP 4: Record Recovery & Return */}
         {step === 4 && (
           <div className="space-y-5 relative z-10 text-center animate-in fade-in duration-200 py-1">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto shadow-xl">
+            <div className="w-14 h-14 rounded-2xl bg-[#5E1473]/30 border border-[#5E1473]/50 text-[#e472ff] flex items-center justify-center mx-auto shadow-xl">
               <CheckCircle2 className="w-7 h-7" />
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-lg font-bold text-white">Recovery Recorded</h3>
+              <h3 className="text-lg font-bold text-white">Reset complete</h3>
               <p className="text-xs text-neutral-300 max-w-xs mx-auto leading-relaxed font-sans">
-                You broke the spiral and regained control of your momentum.
+                You stopped the slide and got back to it. Keep this rhythm.
               </p>
             </div>
 
             {/* Recovery Summary */}
-            <div className="p-3.5 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 text-left space-y-1.5">
+            <div className="p-3.5 rounded-2xl bg-[#5E1473]/20 border border-[#5E1473]/40 text-left space-y-1.5">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5 font-mono">
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                  Control Restored
+                <span className="text-xs font-bold text-[#e472ff] flex items-center gap-1.5 font-mono">
+                  <Sparkles className="w-3.5 h-3.5 text-[#e472ff]" />
+                  Back in control
                 </span>
-                <span className="text-xs font-mono font-bold text-emerald-400">
+                <span className="text-xs font-mono font-bold text-[#e472ff]">
                   {isCooldownActive ? '+0 XP' : '+25 XP'}
                 </span>
               </div>
@@ -437,8 +454,8 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4 text-amber-400 flex-shrink-0" />
                   <div>
-                    <span className="font-bold block text-amber-300">XP Cooldown Active</span>
-                    <span className="text-[10px] text-amber-200/70 block">Anti-farming rule (1hr cooldown)</span>
+                    <span className="font-bold block text-amber-300">Cooldown active</span>
+                    <span className="text-[10px] text-amber-200/70 block">Available again in 1 hour</span>
                   </div>
                 </div>
                 <span className="text-amber-400 font-bold bg-amber-500/15 px-2 py-1 rounded-lg border border-amber-500/30">
@@ -447,14 +464,18 @@ export const EmergencyResetModal: React.FC<EmergencyResetModalProps> = ({
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={handleReturnToNormalMode}
-              className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-mono font-bold transition-all shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 active:scale-95"
-            >
-              <span>Return to Normal Mode</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+            <div className="w-full flex justify-center pt-2">
+              <LiquidMetalButton
+                type="button"
+                size="lg"
+                variant="purple"
+                width={260}
+                height={48}
+                onClick={handleReturnToNormalMode}
+                icon={<ArrowRight className="w-4 h-4" />}
+                label="Back to dashboard"
+              />
+            </div>
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { IdentityStat } from '../types';
+import { IdentityStat, Mission, UserProfile, ExecutionStats } from '../types';
 
 export interface ProgressionTier {
   minLevel: number;
@@ -76,9 +76,9 @@ export function getTierForLevel(level: number): ProgressionTier {
 }
 
 export function getMetricRatingLabel(score: number): { label: string; colorClass: string } {
-  if (score >= 90) return { label: 'Excellent', colorClass: 'text-[#00e599]' };
-  if (score >= 80) return { label: 'Strong', colorClass: 'text-emerald-400' };
-  if (score >= 70) return { label: 'Good', colorClass: 'text-cyan-400' };
+  if (score >= 90) return { label: 'Excellent', colorClass: 'text-orange-400' };
+  if (score >= 80) return { label: 'Strong', colorClass: 'text-orange-400' };
+  if (score >= 70) return { label: 'Good', colorClass: 'text-orange-300' };
   if (score >= 60) return { label: 'Fair', colorClass: 'text-amber-400' };
   return { label: 'Rebuilding', colorClass: 'text-rose-400' };
 }
@@ -321,4 +321,78 @@ export function applyMissedDaysDecay(
       trend: newScore < currentScore ? 'down' : stat.trend,
     };
   });
+}
+
+export interface MissionCategoryDef {
+  id: string;
+  name: string;
+  iconName: string;
+  color: string;
+  attribute: string;
+}
+
+export const MISSION_CATEGORIES: MissionCategoryDef[] = [
+  { id: 'focus', name: 'Deep Work & Focus', iconName: 'Target', color: '#06B6D4', attribute: 'Focus' },
+  { id: 'health', name: 'Health & Vitality', iconName: 'HeartPulse', color: '#5E1473', attribute: 'Health' },
+  { id: 'discipline', name: 'Discipline & Routine', iconName: 'Shield', color: '#EC4899', attribute: 'Discipline' },
+  { id: 'mind', name: 'Mind & Learning', iconName: 'Brain', color: '#A855F7', attribute: 'Consistency' },
+  { id: 'fitness', name: 'Movement & Fitness', iconName: 'Activity', color: '#F97316', attribute: 'Health' },
+  { id: 'purpose', name: 'Purpose & Strategy', iconName: 'Compass', color: '#EAB308', attribute: 'Purpose' },
+  { id: 'selftrust', name: 'Self-Trust & Promises', iconName: 'Sparkles', color: '#3B82F6', attribute: 'Self-Trust' },
+  { id: 'resilience', name: 'Resilience & Reset', iconName: 'RotateCcw', color: '#5E1473', attribute: 'Resilience' },
+];
+
+export interface MissionPriorityDef {
+  id: 'PRIMARY' | 'SECONDARY' | 'BONUS';
+  label: string;
+  shortLabel: string;
+  baseXp: number;
+  color: string;
+  badgeClass: string;
+}
+
+export const MISSION_PRIORITIES: MissionPriorityDef[] = [
+  { id: 'PRIMARY', label: 'Core Priority', shortLabel: 'Critical', baseXp: 50, color: 'text-cyan-400', badgeClass: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' },
+  { id: 'SECONDARY', label: 'Standard Priority', shortLabel: 'High', baseXp: 30, color: 'text-amber-400', badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
+  { id: 'BONUS', label: 'Micro / Bonus', shortLabel: 'Bonus', baseXp: 20, color: 'text-[#e472ff]', badgeClass: 'bg-[#5E1473]/30 text-[#e472ff] border-[#5E1473]/60' },
+];
+
+export function computeExecutionStats(missions: Mission[], user?: UserProfile): ExecutionStats {
+  const totalCreated = missions.length;
+  const completedMissions = missions.filter((m) => m.state === 'COMPLETED' || m.completed);
+  const totalCompleted = completedMissions.length;
+  const totalMissed = missions.filter((m) => m.state === 'MISSED').length;
+
+  const finishedDecisive = totalCompleted + totalMissed;
+  const executionRate =
+    finishedDecisive > 0
+      ? Math.round((totalCompleted / finishedDecisive) * 100)
+      : totalCreated > 0
+      ? Math.round((totalCompleted / totalCreated) * 100)
+      : 100;
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const dailyCompleted = completedMissions.filter((m) => {
+    if (m.completedAt) return m.completedAt.startsWith(todayStr);
+    return true;
+  }).length;
+
+  const calculatedMissionsFocusMinutes = completedMissions.reduce(
+    (sum, m) => sum + (m.durationMinutes || 25),
+    0
+  );
+
+  const totalFocusMinutes = Math.max(user?.totalFocusMinutes || 0, calculatedMissionsFocusMinutes);
+  const totalSessions = Math.max(user?.totalSessionsCompleted || 0, totalCompleted);
+
+  return {
+    totalMissionsCreated: totalCreated,
+    totalMissionsCompleted: totalCompleted,
+    totalMissionsMissed: totalMissed,
+    executionRate: Math.min(100, Math.max(0, executionRate)),
+    dailyCompletedCount: dailyCompleted,
+    weeklyCompletedCount: totalCompleted,
+    totalFocusMinutes,
+    totalSessionsCompleted: totalSessions,
+  };
 }

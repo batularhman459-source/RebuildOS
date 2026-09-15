@@ -1,13 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { UserProfile } from '../types';
-import { Flame, Zap, Target, Shield, User } from 'lucide-react';
+import { UserProfile, Mission } from '../types';
+import { Zap, Target, Shield, User } from 'lucide-react';
 import { ChangelogModal } from './ChangelogModal';
 import { MetricExplanationModal, MetricType } from './MetricExplanationModal';
+import { StreakModal } from './StreakModal';
+import { StreakBadge } from './StreakBadge';
+import { TactileDial } from './TactileDial';
 import { getMetricRatingLabel } from '../lib/progression';
 import { AnimatePresence } from 'motion/react';
 
 interface HeaderProps {
   user: UserProfile;
+  missions?: Mission[];
   missionRate?: number;
   restartsCount?: number;
   onOpenProfile: () => void;
@@ -84,220 +88,132 @@ const EVENING_SENTENCES = [
 
 export const Header: React.FC<HeaderProps> = ({
   user,
+  missions = [],
   missionRate = 0,
   restartsCount = 2,
   onOpenProfile,
 }) => {
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showStreakModal, setShowStreakModal] = useState(false);
   const [metricModal, setMetricModal] = useState<MetricType | null>(null);
-  const xpPercentage = Math.min(100, Math.round((user.xp / user.xpToNextLevel) * 100));
+  const safeXpToNext = user.xpToNextLevel > 0 ? user.xpToNextLevel : 100;
+  const safeXp = typeof user.xp === 'number' ? user.xp : 0;
+  const xpPercentage = Math.min(100, Math.max(0, Math.round((safeXp / safeXpToNext) * 100)));
 
   const executionRating = getMetricRatingLabel(missionRate);
   const recoveryRating = getMetricRatingLabel(user.recoveryRate);
 
-  // Determine time of day greeting & tagline
+  const safeExecutionRate = Math.max(0, Math.min(100, missionRate));
+  const safeRecoveryRate = Math.max(0, Math.min(100, user.recoveryRate));
+
+  // Determine time of day greeting
   const now = new Date();
   const hour = now.getHours();
-
-  let timeOfDay = 'morning';
-  let sentenceList = MORNING_SENTENCES;
-
-  if (hour >= 12 && hour < 18) {
-    timeOfDay = 'afternoon';
-    sentenceList = AFTERNOON_SENTENCES;
-  } else if (hour >= 18 || hour < 5) {
-    timeOfDay = 'evening';
-    sentenceList = EVENING_SENTENCES;
-  }
-
-  // Pick sentence deterministically based on date and hour, or stable random choice per session
-  const timeTagline = useMemo(() => {
-    const seed = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate() + hour;
-    return sentenceList[seed % sentenceList.length];
-  }, [timeOfDay, hour]);
+  const timeOfDay = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
 
   return (
-    <header className="space-y-4">
-      {/* Top Logo & Streak Header Row */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
+    <header className="space-y-3.5">
+      {/* Top Logo & Controls Row (Mobile Only, Desktop uses DesktopNav) */}
+      <div className="md:hidden flex items-center justify-between">
+        <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={onOpenProfile}
-            className="flex items-center gap-1 text-left group focus:outline-none hover:opacity-90 transition-opacity"
-            title="Open Identity OS Profile"
+            aria-label="Open profile"
+            className="flex items-center gap-1 text-left group focus-visible:ring-2 focus-visible:ring-ring rounded-lg p-1 transition-opacity hover:opacity-90 cursor-pointer"
+            title="Open profile"
           >
-            <h1 className="text-2xl font-black tracking-tight text-white flex items-center">
-              Rebuild<span className="bg-gradient-to-r from-[#a855f7] via-[#3b82f6] to-[#00e599] bg-clip-text text-transparent ml-0.5">OS</span>
+            <h1 translate="no" className="text-xl font-black tracking-tight text-white flex items-center">
+              Rebuild<span className="text-orange-500 ml-0.5">OS</span>
             </h1>
           </button>
 
           <button
+            type="button"
             onClick={() => setShowChangelog(true)}
-            className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#0c241a] text-[#00e599] border border-emerald-500/30 hover:bg-emerald-500/20 transition-all cursor-pointer"
-            title="View System Changelog"
+            aria-label="What's new"
+            className="text-[9px] font-sans font-bold px-2 py-0.5 rounded-full bg-white/10 text-zinc-300 border border-white/15 hover:bg-white/20 hover:text-white transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-white/30"
+            title="What's new"
           >
             v1
           </button>
         </div>
 
-        {/* Right Action Controls: Streak Pill */}
+        {/* Right Action Controls: Streak Badge */}
         <div className="flex items-center gap-2">
-          {/* Streak Pill */}
-          <div
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-500/30 bg-white/[0.06] backdrop-blur-md text-[#f59e0b] text-xs font-bold font-mono shadow-sm"
-          >
-            <Flame className="w-3.5 h-3.5 fill-[#f59e0b] text-[#f59e0b]" />
-            <span>{user.streak}</span>
-          </div>
+          <StreakBadge
+            id="mobile-header-streak-badge"
+            currentStreak={user.streak}
+            longestStreak={user.bestStreak}
+            size="md"
+            showLabel={false}
+            onClick={() => setShowStreakModal(true)}
+          />
         </div>
       </div>
 
       {showChangelog && <ChangelogModal onClose={() => setShowChangelog(false)} />}
 
-      {/* Greeting Title & Dynamic Tagline */}
-      <div>
-        <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-white capitalize">
-          Good {timeOfDay}, {user.name}
-        </h2>
-        <p className="text-sm font-light text-neutral-400 mt-1">
-          "{timeTagline}"
-        </p>
-      </div>
+      {/* Main Level & Momentum Card - Crafted in Frosted Titanium Glass */}
+      <div className="relative overflow-hidden rounded-[32px] sm:rounded-[36px] p-6 sm:p-7 bg-gradient-to-b from-white/[0.16] via-white/[0.08] to-white/[0.03] backdrop-blur-3xl border border-white/20 shadow-[inset_0_1px_1.5px_rgba(255,255,255,0.4),0_24px_50px_rgba(0,0,0,0.4)] space-y-4 transition-all text-white">
+        {/* Top Rim Specular Highlight */}
+        <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-white/40 to-transparent pointer-events-none" />
 
-      {/* Main Level & Momentum Card */}
-      <div className="bg-black/60 backdrop-blur-2xl border border-white/10 rounded-[28px] p-5 space-y-4 shadow-[0_12px_40px_rgba(0,0,0,0.6)] relative overflow-hidden before:absolute before:inset-x-0 before:top-0 before:h-[1px] before:bg-gradient-to-r before:from-transparent before:via-white/20 before:to-transparent">
-        {/* Top Title Row */}
+        {/* Level & Title Row */}
         <div className="flex items-center justify-between relative z-10">
           <div className="flex items-center gap-3.5">
-            {/* Circle Level Badge */}
-            <div className="w-12 h-12 rounded-full border-2 border-[#00e599] bg-[#0c241a]/90 backdrop-blur-md text-[#00e599] font-black text-sm flex items-center justify-center flex-shrink-0 font-mono shadow-md shadow-emerald-500/20">
+            <div className="w-12 h-12 rounded-2xl border border-white/20 bg-white/10 text-white font-bold text-sm flex items-center justify-center flex-shrink-0 font-sans shadow-inner backdrop-blur-md">
               L{user.level}
             </div>
 
             <div>
-              <h3 className="text-xl font-bold text-white tracking-tight leading-snug">
+              <h2 className="text-lg font-semibold text-white tracking-tight leading-tight">
                 {user.title}
-              </h3>
-              <p className="text-xs font-light text-[#00e599] tracking-wide mt-0.5">
-                Level {user.level}
+              </h2>
+              <p className="text-xs text-white/60 capitalize mt-0.5">
+                Good {timeOfDay}, {user.name}
               </p>
             </div>
+          </div>
+
+          <div className="text-right">
+            <span className="text-xs font-semibold text-white">
+              {user.xp} <span className="text-[11px] text-white/60 font-normal">/ {user.xpToNextLevel} XP</span>
+            </span>
           </div>
         </div>
 
         {/* XP Progress Bar */}
-        <div className="space-y-1.5 relative z-10">
-          <div className="flex justify-between text-xs font-light text-neutral-400">
-            <span>XP Progress</span>
-            <strong className="text-white font-normal">
-              {user.xp} / {user.xpToNextLevel} XP ({xpPercentage}%)
-            </strong>
-          </div>
-          <div className="w-full h-3 bg-black/60 rounded-full overflow-hidden border border-white/10 p-0.5">
-            <div
-              className="h-full bg-gradient-to-r from-[#a855f7] via-[#3b82f6] to-[#00e599] rounded-full transition-all duration-500 ease-out shadow-sm shadow-cyan-500/30"
-              style={{ width: `${xpPercentage}%` }}
-            />
-          </div>
+        <div className="w-full h-2.5 bg-black/20 rounded-full overflow-hidden border border-white/10 relative z-10 shadow-inner">
+          <div
+            className="h-full bg-gradient-to-r from-white/75 to-white rounded-full transition-all duration-500 ease-out shadow-[0_0_12px_rgba(255,255,255,0.6)]"
+            style={{ width: `${Math.max(0, Math.min(100, xpPercentage))}%` }}
+          />
         </div>
 
-        {/* 2 Compact Pill Metrics with Dynamic Percentage Outline Borders */}
-        <div className="pt-2 relative z-10">
-          <div className="grid grid-cols-2 max-w-[300px] mx-auto gap-2.5 sm:gap-3.5 items-center">
-            {/* Pill 1: Execution */}
-            <button
-              type="button"
-              onClick={() => setMetricModal('execution')}
-              className="relative group text-center focus:outline-none cursor-pointer bg-[#0a0d12]/95 rounded-xl p-2 sm:p-2.5 transition-all group-hover:scale-[1.03] active:scale-95 shadow-[0_0_12px_rgba(0,229,153,0.15)] overflow-hidden"
-            >
-              {/* Dynamic Percentage Outline Border */}
-              <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
-                <rect
-                  x="1"
-                  y="1"
-                  width="calc(100% - 2px)"
-                  height="calc(100% - 2px)"
-                  rx="10"
-                  fill="none"
-                  stroke="rgba(0, 229, 153, 0.15)"
-                  strokeWidth="2"
-                />
-                <rect
-                  x="1"
-                  y="1"
-                  width="calc(100% - 2px)"
-                  height="calc(100% - 2px)"
-                  rx="10"
-                  fill="none"
-                  stroke="#00e599"
-                  strokeWidth="2"
-                  pathLength="100"
-                  strokeDasharray={`${missionRate} 100`}
-                  strokeLinecap="round"
-                  className="transition-all duration-700 ease-out"
-                />
-              </svg>
+        {/* Execution & Recovery Physical Tactile Dial Gauges */}
+        <div className="pt-2 relative z-10 grid grid-cols-2 gap-2.5 sm:gap-3">
+          {/* Dial 1: Execution */}
+          <TactileDial
+            value={safeExecutionRate}
+            label="Execution"
+            sublabel={executionRating.label}
+            glowColor="#F97316"
+            glowSecondary="#FB923C"
+            size="md"
+            onClick={() => setMetricModal('execution')}
+          />
 
-              <div className="relative z-10 flex flex-col items-center justify-center">
-                <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-extrabold text-[#00e599] tracking-wider uppercase">
-                  <Flame className="w-3 h-3 text-[#00e599] fill-[#00e599]/20 flex-shrink-0" />
-                  <span>Execution</span>
-                </div>
-                <div className="mt-0.5 flex items-baseline justify-center">
-                  <span className="text-sm sm:text-base font-black font-mono text-white tracking-wide">
-                    {missionRate}%
-                  </span>
-                </div>
-              </div>
-            </button>
-
-            {/* Pill 2: Recovery */}
-            <button
-              type="button"
-              onClick={() => setMetricModal('recovery')}
-              className="relative group text-center focus:outline-none cursor-pointer bg-[#0a0d12]/95 rounded-xl p-2 sm:p-2.5 transition-all group-hover:scale-[1.03] active:scale-95 shadow-[0_0_12px_rgba(52,211,153,0.15)] overflow-hidden"
-            >
-              {/* Dynamic Percentage Outline Border */}
-              <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
-                <rect
-                  x="1"
-                  y="1"
-                  width="calc(100% - 2px)"
-                  height="calc(100% - 2px)"
-                  rx="10"
-                  fill="none"
-                  stroke="rgba(52, 211, 153, 0.15)"
-                  strokeWidth="2"
-                />
-                <rect
-                  x="1"
-                  y="1"
-                  width="calc(100% - 2px)"
-                  height="calc(100% - 2px)"
-                  rx="10"
-                  fill="none"
-                  stroke="#34d399"
-                  strokeWidth="2"
-                  pathLength="100"
-                  strokeDasharray={`${user.recoveryRate} 100`}
-                  strokeLinecap="round"
-                  className="transition-all duration-700 ease-out"
-                />
-              </svg>
-
-              <div className="relative z-10 flex flex-col items-center justify-center">
-                <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-extrabold text-emerald-400 tracking-wider uppercase">
-                  <Shield className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-                  <span>Recovery</span>
-                </div>
-                <div className="mt-0.5 flex items-baseline justify-center">
-                  <span className="text-sm sm:text-base font-black font-mono text-white tracking-wide">
-                    {user.recoveryRate}%
-                  </span>
-                </div>
-              </div>
-            </button>
-          </div>
+          {/* Dial 2: Recovery */}
+          <TactileDial
+            value={safeRecoveryRate}
+            label="Recovery"
+            sublabel={recoveryRating.label}
+            glowColor="#F97316"
+            glowSecondary="#FB923C"
+            size="md"
+            onClick={() => setMetricModal('recovery')}
+          />
         </div>
       </div>
 
@@ -312,6 +228,15 @@ export const Header: React.FC<HeaderProps> = ({
             longestStreak={user.bestStreak}
             currentStreak={user.streak}
             onClose={() => setMetricModal(null)}
+          />
+        )}
+
+        {showStreakModal && (
+          <StreakModal
+            user={user}
+            missions={missions}
+            missionRate={missionRate}
+            onClose={() => setShowStreakModal(false)}
           />
         )}
       </AnimatePresence>

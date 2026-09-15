@@ -1,927 +1,953 @@
-import React, { useState } from 'react';
-import { Mission, UserProfile, FocusSessionLog } from '../types';
-import { Target, Play, Plus, Zap, Check, Clock, Trash2, ChevronDown, ChevronUp, RotateCcw, Shield, Sparkles, Wand2, Bot, AlertTriangle, Calendar, Edit3, ArrowRight } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import { Mission, UserProfile, FocusSessionLog, MissionState, MissionPriority } from '../types';
+import {
+  Target,
+  Plus,
+  Minus,
+  Zap,
+  Check,
+  Clock,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  Shield,
+  Sparkles,
+  Calendar,
+  Edit3,
+  ArrowLeft,
+  Flame,
+  AlertCircle,
+  XCircle,
+  MoreVertical,
+  Activity,
+  HeartPulse,
+  Brain,
+  Compass,
+  CheckCircle2,
+  ListChecks,
+  X,
+  Navigation,
+  Play,
+  Archive,
+} from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { playMicroWinTone } from '../lib/sound';
 import { motion, AnimatePresence } from 'motion/react';
-import { CORE_ATTRIBUTES } from '../lib/progression';
-import { breakdownIntentionIntoMissions, GeneratedMission } from '../lib/aiPlanner';
+import { CORE_ATTRIBUTES, MISSION_CATEGORIES, MISSION_PRIORITIES } from '../lib/progression';
+import {
+  MissionCategoryDef,
+  loadCustomCategories,
+  getCategoryDefinition,
+  renderCategoryIcon,
+} from '../lib/categories';
+import { CategoryPicker } from './CategoryPicker';
+import { LiquidMetalButton } from './ui/liquid-metal-button';
+import { MorphingCardStack, CardData } from './ui/morphing-card-stack';
+import { Layers } from 'lucide-react';
 
 interface MissionsSectionProps {
   user?: UserProfile;
   missions: Mission[];
   focusLogs?: FocusSessionLog[];
   onToggleMission: (missionId: string) => void;
+  onSetMissionState?: (missionId: string, newState: MissionState) => void;
   onStartFocusSession: (mission: Mission) => void;
   onAddMission: (mission: Omit<Mission, 'id' | 'completed'>) => void;
+  onUpdateMission?: (mission: Mission) => void;
   onDeleteMission?: (missionId: string) => void;
   onUpdateMissionAttribute?: (missionId: string, targetAttribute: string) => void;
+  onOpenArchive?: () => void;
 }
+
+type FilterTab = 'active' | 'planned' | 'completed' | 'missed';
 
 export const MissionsSection: React.FC<MissionsSectionProps> = ({
   user,
   missions,
   focusLogs = [],
   onToggleMission,
+  onSetMissionState,
   onStartFocusSession,
   onAddMission,
+  onUpdateMission,
   onDeleteMission,
   onUpdateMissionAttribute,
+  onOpenArchive,
 }) => {
+  const [activeFilter, setActiveFilter] = useState<FilterTab>('active');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showPlannerModal, setShowPlannerModal] = useState(false);
-  const [showCompleted, setShowCompleted] = useState(false);
+  const [editingMission, setEditingMission] = useState<Mission | null>(null);
   const [missionToDelete, setMissionToDelete] = useState<Mission | null>(null);
-  const [newTitle, setNewTitle] = useState('');
-  const [newDesc, setNewDesc] = useState('');
-  const [newType, setNewType] = useState<'PRIMARY' | 'SECONDARY' | 'BONUS'>('SECONDARY');
-  const [newDurationMinutes, setNewDurationMinutes] = useState(25);
-  const [newAttribute, setNewAttribute] = useState('Focus');
+  const [activeMenuMissionId, setActiveMenuMissionId] = useState<string | null>(null);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [customCategories, setCustomCategories] = useState<MissionCategoryDef[]>(() =>
+    loadCustomCategories()
+  );
 
-  // AI Mission Planner State
-  const [intentionInput, setIntentionInput] = useState('I need to work on my website.');
-  const [generatedMissions, setGeneratedMissions] = useState<GeneratedMission[]>([]);
-  const [isSynthesizing, setIsSynthesizing] = useState(false);
-  const [pendingGeneratedIndex, setPendingGeneratedIndex] = useState<number | null>(null);
-  const [showRecommendedStack, setShowRecommendedStack] = useState(false);
+  // Helper to check if due date & time is in the past
+  const isDueDateTimePast = (dueDateStr?: string, dueTimeStr?: string): boolean => {
+    if (!dueDateStr) return false;
+    const timeStr = dueTimeStr || '23:59';
+    try {
+      const dueDateTime = new Date(`${dueDateStr}T${timeStr}:00`);
+      if (isNaN(dueDateTime.getTime())) return false;
+      return dueDateTime.getTime() < Date.now();
+    } catch {
+      return false;
+    }
+  };
 
-  const activeMissions = missions.filter((m) => !m.completed);
-  const completedMissions = missions.filter((m) => m.completed);
+  const getDefaultFutureTime = () => {
+    const now = new Date();
+    now.setHours(now.getHours() + 1);
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(Math.floor(now.getMinutes() / 15) * 15).padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
 
-  const completedCount = completedMissions.length;
-  const totalCount = missions.length;
+  // Form states for Add / Edit
+  const [formTitle, setFormTitle] = useState('');
+  const [formDesc, setFormDesc] = useState('');
+  const [formCategory, setFormCategory] = useState('Deep Work & Focus');
+  const [formPriority, setFormPriority] = useState<MissionPriority>('PRIMARY');
+  const [formDuration, setFormDuration] = useState(25);
+  const [formAttribute, setFormAttribute] = useState('Focus');
+  const [formDueDate, setFormDueDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [formDueTime, setFormDueTime] = useState<string>(() => {
+    const now = new Date();
+    now.setHours(now.getHours() + 1);
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(Math.floor(now.getMinutes() / 15) * 15).padStart(2, '0');
+    return `${hh}:${mm}`;
+  });
+  const [formState, setFormState] = useState<MissionState>('ACTIVE');
+
+  // Check if current form due date and time is past
+  const isFormDueTimePast = useMemo(() => {
+    return isDueDateTimePast(formDueDate, formDueTime);
+  }, [formDueDate, formDueTime]);
+
+  // Categorize missions strictly for TODAY
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const isDoneToday = (m: Mission) => {
+    const isCompleted = m.state === 'COMPLETED' || m.completed === true;
+    if (!isCompleted) return false;
+    const compDate =
+      m.completedDate ||
+      (m.completedAt ? m.completedAt.split('T')[0] : null) ||
+      m.dueDate;
+    return compDate === todayStr;
+  };
+
+  const isMissedToday = (m: Mission) => {
+    const isMissed = m.state === 'MISSED';
+    if (!isMissed) return false;
+    const missedDate =
+      m.dueDate ||
+      (m.createdAt ? m.createdAt.split('T')[0] : null);
+    return !missedDate || missedDate === todayStr;
+  };
+
+  // Only non-archived missions belong to today's active dashboard
+  const activeWorkingMissions = missions.filter((m) => !m.isArchived && m.state === 'ACTIVE');
+  const plannedMissions = missions.filter(
+    (m) => !m.isArchived && (m.state === 'PLANNED' || (!m.state && !m.completed))
+  );
+  // Done page ONLY shows missions completed TODAY
+  const completedMissionsToday = missions.filter((m) => !m.isArchived && isDoneToday(m));
+  // Missed page ONLY shows missions missed TODAY
+  const missedMissions = missions.filter((m) => !m.isArchived && isMissedToday(m));
+
+  // Today's total active focus scope
+  const todayTotalMissions = missions.filter(
+    (m) => !m.isArchived && ((m.state !== 'COMPLETED' && !m.completed) || isDoneToday(m))
+  );
+
+  const totalCount = todayTotalMissions.length;
+  const completedCount = completedMissionsToday.length;
   const completionPercentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
-  // Compute active data days
-  const streakDays = user?.streak || 1;
-  const daysOfData = Math.max(
-    streakDays,
-    completedCount >= 3 ? 3 : completedCount > 0 ? 2 : 1
-  );
-  const isDataSufficient = daysOfData >= 3;
-  const isFirstWeek = daysOfData < 7;
+  // Filtered list to display
+  const displayedMissions = missions.filter((m) => {
+    if (m.isArchived) return false;
+    const s = m.state || (m.completed ? 'COMPLETED' : 'PLANNED');
+    if (activeFilter === 'active') return s === 'ACTIVE';
+    if (activeFilter === 'planned') return s === 'PLANNED';
+    if (activeFilter === 'completed') return isDoneToday(m);
+    if (activeFilter === 'missed') return isMissedToday(m);
+    return true;
+  });
 
-  // AI Mission Planner Dynamic Trio based on Data Phase
-  const RECOMMENDED_TRIO: Array<Omit<Mission, 'id' | 'completed'>> = !isDataSufficient
-    ? [
-        {
-          title: '25-Minute Baseline Focus Sprint',
-          description: 'Single-task focus block to establish your baseline execution velocity (Day ' + daysOfData + '/3).',
-          type: 'PRIMARY',
-          xpReward: 50,
-          durationMinutes: 25,
-          targetAttribute: 'Focus',
-        },
-        {
-          title: '15-Minute Health & Movement Protocol',
-          description: 'Light exercise or movement session to build your physical health baseline.',
-          type: 'SECONDARY',
-          xpReward: 30,
-          durationMinutes: 15,
-          targetAttribute: 'Health',
-        },
-        {
-          title: 'Evening System Audit & Journal Entry',
-          description: 'Log 1 win and 1 friction point in your evening reflection to build 3-day data history.',
-          type: 'BONUS',
-          xpReward: 25,
-          durationMinutes: 10,
-          targetAttribute: 'Discipline',
-        },
-      ]
-    : isFirstWeek
-    ? [
-        {
-          title: 'Daily Adaptive Deep Work Sprint',
-          description: '45 minutes of uninterrupted execution tailored to your last ' + daysOfData + ' days of momentum.',
-          type: 'PRIMARY',
-          xpReward: 50,
-          durationMinutes: 45,
-          targetAttribute: 'Focus',
-        },
-        {
-          title: 'Daily Energy Reset & Workout',
-          description: '30 minutes of high-intensity movement to maintain neuro-plasticity and physical health.',
-          type: 'SECONDARY',
-          xpReward: 30,
-          durationMinutes: 30,
-          targetAttribute: 'Health',
-        },
-        {
-          title: 'Daily Reflection & Priority Anchor',
-          description: '10 minutes reviewing today win rate and reinforcing self-trust.',
-          type: 'BONUS',
-          xpReward: 25,
-          durationMinutes: 10,
-          targetAttribute: 'Self-Trust',
-        },
-      ]
-    : [
-        {
-          title: 'Weekly Focus & Execution Block',
-          description: '60 minutes targeting your primary leverage goal based on your rolling performance.',
-          type: 'PRIMARY',
-          xpReward: 50,
-          durationMinutes: 60,
-          targetAttribute: 'Focus',
-        },
-        {
-          title: 'Weekly Health Mastery Protocol',
-          description: '45 minutes of intensive physical training to sustain high health and energy.',
-          type: 'SECONDARY',
-          xpReward: 30,
-          durationMinutes: 45,
-          targetAttribute: 'Health',
-        },
-        {
-          title: 'Weekly Strategic Reflection & Audit',
-          description: '15 minutes auditing habit completion rates and recovery shields.',
-          type: 'BONUS',
-          xpReward: 25,
-          durationMinutes: 15,
-          targetAttribute: 'Resilience',
-        },
-      ];
-
-  const handleSynthesizeIntention = (customText?: string) => {
-    const textToUse = customText !== undefined ? customText : intentionInput;
-    if (!textToUse.trim()) return;
-
-    setIsSynthesizing(true);
-    setTimeout(() => {
-      const results = breakdownIntentionIntoMissions(textToUse, focusLogs, user);
-      setGeneratedMissions(results);
-      setIsSynthesizing(false);
-    }, 350);
-  };
-
-  const handleOpenAddModalForGenerated = (gen: GeneratedMission, index: number) => {
-    setNewTitle(gen.title);
-    setNewDesc(gen.description || '');
-    setNewType(gen.type || 'SECONDARY');
-    setNewDurationMinutes(gen.suggestedFocusMinutes || gen.durationMinutes || 25);
-    setNewAttribute(gen.targetAttribute || 'Focus');
-    setPendingGeneratedIndex(index);
+  // Modal open handlers
+  const handleOpenCreateModal = () => {
+    setEditingMission(null);
+    setFormTitle('');
+    setFormDesc('');
+    setFormCategory('Deep Work & Focus');
+    setFormPriority('PRIMARY');
+    setFormDuration(25);
+    setFormAttribute('Focus');
+    setFormDueDate(new Date().toISOString().split('T')[0]);
+    setFormDueTime(getDefaultFutureTime());
+    setFormState('ACTIVE');
+    setShowAdvancedOptions(false);
     setShowAddModal(true);
   };
 
-  const handleOpenManualAddModal = () => {
-    setNewTitle('');
-    setNewDesc('');
-    setNewType('SECONDARY');
-    setNewDurationMinutes(25);
-    setNewAttribute('Focus');
-    setPendingGeneratedIndex(null);
+  const handleOpenEditModal = (mission: Mission) => {
+    setEditingMission(mission);
+    setFormTitle(mission.title);
+    setFormDesc(mission.description || '');
+    setFormCategory(mission.category || 'Deep Work & Focus');
+    setFormPriority(mission.priority || mission.type || 'SECONDARY');
+    setFormDuration(mission.durationMinutes || 25);
+    setFormAttribute(mission.targetAttribute || 'Focus');
+    setFormDueDate(mission.dueDate || new Date().toISOString().split('T')[0]);
+    setFormDueTime(mission.dueTime || '14:00');
+    setFormState(mission.state || (mission.completed ? 'COMPLETED' : 'ACTIVE'));
+    setShowAdvancedOptions(Boolean(mission.description && mission.description.length > 0));
     setShowAddModal(true);
+    setActiveMenuMissionId(null);
   };
 
-  const handleApproveAllGenerated = () => {
-    generatedMissions.forEach((gen) => {
-      onAddMission({
-        title: gen.title,
-        description: gen.description,
-        type: gen.type,
-        xpReward: gen.xpReward,
-        durationMinutes: gen.suggestedFocusMinutes || gen.durationMinutes,
-        targetAttribute: gen.targetAttribute || 'Focus',
+  const handleSaveMissionForm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formTitle.trim()) return;
+
+    const priorityXp = formPriority === 'PRIMARY' ? 50 : formPriority === 'SECONDARY' ? 30 : 20;
+    const isPast = isDueDateTimePast(formDueDate, formDueTime);
+
+    if (editingMission && onUpdateMission) {
+      const finalState: MissionState = (isPast && formState !== 'COMPLETED') ? 'MISSED' : formState;
+      onUpdateMission({
+        ...editingMission,
+        title: formTitle.trim(),
+        description: formDesc.trim(),
+        category: formCategory,
+        priority: formPriority,
+        type: formPriority,
+        durationMinutes: Number(formDuration) || 25,
+        targetAttribute: formAttribute,
+        dueDate: formDueDate,
+        dueTime: formDueTime,
+        state: finalState,
+        completed: finalState === 'COMPLETED',
+        xpReward: priorityXp,
       });
-    });
-    playMicroWinTone();
-    confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
-    setGeneratedMissions([]);
+      if (finalState === 'MISSED') {
+        setActiveFilter('missed');
+      }
+    } else {
+      const finalState: MissionState = isPast ? 'MISSED' : (formState || 'ACTIVE');
+      onAddMission({
+        title: formTitle.trim(),
+        description: formDesc.trim() || 'Tactical mission for identity alignment.',
+        category: formCategory,
+        priority: formPriority,
+        type: formPriority,
+        state: finalState,
+        xpReward: priorityXp,
+        durationMinutes: Number(formDuration) || 25,
+        targetAttribute: formAttribute,
+        dueDate: formDueDate,
+        dueTime: formDueTime,
+        createdAt: new Date().toISOString(),
+      });
+      if (finalState === 'MISSED') {
+        setActiveFilter('missed');
+      }
+    }
+
+    setShowAddModal(false);
+    setEditingMission(null);
   };
 
-  const handleInstantiateAllMissions = () => {
-    RECOMMENDED_TRIO.forEach((m) => onAddMission(m));
-    setShowPlannerModal(false);
-    playMicroWinTone();
-    confetti({
-      particleCount: 45,
-      spread: 60,
-      origin: { y: 0.6 },
-      colors: ['#06B6D4', '#22C55E', '#A855F7'],
-    });
-  };
+  const handleSetState = (missionId: string, newState: MissionState) => {
+    if (onSetMissionState) {
+      onSetMissionState(missionId, newState);
+    } else {
+      // Fallback
+      onToggleMission(missionId);
+    }
+    setActiveMenuMissionId(null);
 
-  const handleToggle = (mission: Mission) => {
-    onToggleMission(mission.id);
-
-    if (!mission.completed) {
+    if (newState === 'COMPLETED') {
       playMicroWinTone();
       confetti({
-        particleCount: 40,
-        spread: 50,
+        particleCount: 50,
+        spread: 65,
         origin: { y: 0.6 },
-        colors: ['#22C55E', '#0088FF', '#F59E0B'],
+        colors: ['#5E1473', '#FF00FF', '#FCCF3A'],
       });
     }
   };
 
-  const handleCreateMission = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim()) return;
-
-    const priorityXp = newType === 'PRIMARY' ? 50 : newType === 'SECONDARY' ? 30 : 25;
-
-    onAddMission({
-      title: newTitle.trim(),
-      description: newDesc.trim() || 'Custom micro-mission for identity alignment.',
-      type: newType,
-      xpReward: priorityXp,
-      durationMinutes: Number(newDurationMinutes) || 25,
-      targetAttribute: newAttribute,
-    });
-
-    playMicroWinTone();
-
-    if (pendingGeneratedIndex !== null) {
-      setGeneratedMissions((prev) => prev.filter((_, i) => i !== pendingGeneratedIndex));
-      setPendingGeneratedIndex(null);
+  const handleStartMissionFocus = (mission: Mission) => {
+    if (mission.state !== 'ACTIVE' && onSetMissionState) {
+      onSetMissionState(mission.id, 'ACTIVE');
     }
-
-    setNewTitle('');
-    setNewDesc('');
-    setShowAddModal(false);
+    onStartFocusSession(mission);
   };
 
-  const renderMissionCard = (mission: Mission, isCompletedSection = false) => {
-    if (isCompletedSection) {
-      return (
-        <motion.div
-          key={mission.id}
-          layout
-          initial={{ opacity: 0, y: 5 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, x: -30 }}
-          className="flex items-center justify-between p-3.5 px-4 rounded-2xl bg-black/40 border border-emerald-500/20 backdrop-blur-md gap-3"
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <Check className="w-4 h-4 text-[#00e599] flex-shrink-0" />
-            <span className="text-xs sm:text-sm font-light text-neutral-300 line-through truncate">
-              {mission.title}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={() => handleToggle(mission)}
-              className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-light text-neutral-300 hover:text-white transition-all flex items-center gap-1.5 active:scale-95"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-neutral-400" />
-              <span>Undo</span>
-            </button>
-            {onDeleteMission && (
-              <button
-                onClick={() => setMissionToDelete(mission)}
-                title="Remove Mission"
-                className="p-1.5 rounded-xl text-neutral-500 hover:text-red-400 hover:bg-red-500/10 transition-all active:scale-95"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        </motion.div>
-      );
+  // Helper for category badge icons
+  const getCategoryIcon = (categoryName?: string) => {
+    const cat = getCategoryDefinition(categoryName, customCategories);
+    return renderCategoryIcon(cat.iconName, 'w-3.5 h-3.5', cat.color);
+  };
+
+  const formatCompletionTime = (isoString?: string) => {
+    if (!isoString) return null;
+    try {
+      const d = new Date(isoString);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return null;
     }
+  };
 
-    const isPrimary = mission.type === 'PRIMARY';
-    const isBonus = mission.type === 'BONUS';
-
-    return (
-      <motion.div
-        key={mission.id}
-        layout
-        initial={{ opacity: 0, y: 15, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1, x: 0 }}
-        exit={{
-          x: 350,
-          opacity: 0,
-          scale: 0.92,
-          transition: { duration: 0.35, ease: [0.32, 0.72, 0, 1] },
-        }}
-        className={`backdrop-blur-2xl border rounded-[26px] p-5 space-y-3.5 transition-colors relative overflow-hidden ${
-          mission.completed
-            ? 'border-emerald-500/30 bg-emerald-950/20 opacity-80 shadow-[0_8px_30px_rgb(0,0,0,0.4)]'
-            : isPrimary
-            ? 'border-cyan-500/40 bg-gradient-to-b from-cyan-950/40 via-black/80 to-black/80 shadow-[0_12px_40px_rgba(6,182,212,0.2)]'
-            : 'bg-black/60 border-white/10 hover:border-white/25 shadow-[0_8px_30px_rgb(0,0,0,0.5)]'
-        }`}
-      >
-        {/* Top-Right Trash Icon Button */}
-        {onDeleteMission && (
-          <button
-            onClick={() => setMissionToDelete(mission)}
-            title="Remove Mission"
-            className="absolute top-4 right-4 p-1.5 rounded-xl text-neutral-500 hover:text-red-400 hover:bg-red-500/10 transition-all active:scale-95 z-10"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        )}
-
-        {/* Top Row: Target Icon + Type, Priority Badge & Title */}
-        <div className="flex items-start gap-3.5 pr-8">
-          {/* Custom Concentric Target Badge Icon */}
-          <div
-            className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 border ${
-              mission.completed
-                ? 'bg-[#0c241a] text-[#00e599] border-emerald-500/30'
-                : isPrimary
-                ? 'bg-cyan-950/80 text-cyan-300 border-2 border-cyan-500/50 shadow-md shadow-cyan-500/25'
-                : isBonus
-                ? 'bg-[#261f0c] text-amber-400 border-amber-500/30'
-                : 'bg-[#181818] text-neutral-300 border-white/10'
-            }`}
-          >
-            {isBonus ? (
-              <Zap className="w-6 h-6" />
-            ) : (
-              <div className="relative flex items-center justify-center w-6 h-6">
-                <div className="w-6 h-6 rounded-full border-2 border-current flex items-center justify-center">
-                  <div className="w-3.5 h-3.5 rounded-full border-2 border-current flex items-center justify-center">
-                    <div className="w-1.5 h-1.5 rounded-full bg-current" />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Mission Header Details */}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              {isPrimary ? (
-                <span className="px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono font-black tracking-wider uppercase bg-cyan-500/15 border border-cyan-500/35 text-cyan-300 flex items-center gap-1.5 shadow-sm shadow-cyan-500/20 whitespace-nowrap">
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                  CORE PRIORITY
-                </span>
-              ) : (
-                <span
-                  className={`text-[11px] font-mono font-bold uppercase tracking-wider block ${
-                    isBonus ? 'text-amber-400' : 'text-neutral-400'
-                  }`}
-                >
-                  {mission.type} MISSION
-                </span>
-              )}
-            </div>
-
-            <h4
-              className={`font-bold text-white tracking-tight ${
-                isPrimary ? 'text-lg sm:text-2xl font-black' : 'text-xl'
-              } ${mission.completed ? 'line-through text-neutral-400' : ''}`}
-            >
-              {mission.title}
-            </h4>
-          </div>
-        </div>
-
-        {/* Description */}
-        <p className={`text-xs sm:text-sm leading-relaxed font-light ${isPrimary && !mission.completed ? 'text-neutral-200' : 'text-neutral-400'}`}>
-          {mission.description}
-        </p>
-
-        {/* Time, XP & Target Attribute Meta Row */}
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-light">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5 text-neutral-400 font-light">
-              <Clock className="w-3.5 h-3.5 text-neutral-500" />
-              {mission.durationMinutes || 25} min
-            </span>
-            <span className={`${isPrimary ? 'text-cyan-300 font-semibold' : 'text-[#00e599] font-medium'}`}>
-              +{mission.xpReward} XP
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 bg-neutral-900/80 border border-white/10 px-2.5 py-1 rounded-xl text-[11px]">
-            <Shield className="w-3 h-3 text-cyan-400" />
-            <span className="text-neutral-400 font-mono">Benefits:</span>
-            <span className="text-cyan-400 font-bold font-mono">{mission.targetAttribute || 'Focus'}</span>
-          </div>
-        </div>
-
-        {/* Action Buttons Row */}
-        <div className="pt-3 border-t border-white/5 flex items-center gap-2">
-          {!mission.completed ? (
-            <>
-              <button
-                onClick={() => onStartFocusSession(mission)}
-                className={`flex-1 py-3 px-4 rounded-full font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-98 ${
-                  isPrimary
-                    ? 'bg-gradient-to-r from-cyan-400 via-emerald-400 to-[#00e599] hover:brightness-110 text-black shadow-lg shadow-cyan-500/25'
-                    : 'bg-[#00e599] hover:bg-[#2ae0a0] text-black shadow-md shadow-emerald-500/10'
-                }`}
-              >
-                <Clock className="w-4 h-4 fill-black text-black" />
-                <span>Start Focus</span>
-              </button>
-
-              <button
-                onClick={() => handleToggle(mission)}
-                className="py-3 px-5 rounded-full font-bold text-xs sm:text-sm bg-[#222222] hover:bg-[#2e2e2e] text-white transition-all active:scale-98 flex items-center justify-center"
-              >
-                Done
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => handleToggle(mission)}
-              className="flex-1 py-3 px-5 rounded-full font-bold text-xs sm:text-sm bg-[#181818] border border-emerald-500/40 text-[#00e599] hover:bg-neutral-800 transition-all active:scale-98 flex items-center justify-center gap-2"
-            >
-              <Check className="w-4 h-4 text-[#00e599]" />
-              <span>Completed (Click to undo)</span>
-            </button>
-          )}
-        </div>
-      </motion.div>
-    );
+  const formatDueDateLabel = (dueDate?: string, dueTime?: string) => {
+    if (!dueDate) return null;
+    const isToday = dueDate === todayStr;
+    const timePart = dueTime ? ` @ ${dueTime}` : '';
+    if (isToday) return `Due Today${timePart}`;
+    return `Due ${dueDate}${timePart}`;
   };
 
   return (
-    <section className="space-y-3">
-      {/* Header Row */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-light tracking-wider text-neutral-400 uppercase whitespace-nowrap">
-            TODAY'S MISSIONS
-          </h3>
+    <div className="relative overflow-hidden rounded-[24px] sm:rounded-[28px] p-5 sm:p-6 bg-gradient-to-b from-white/[0.14] via-white/[0.07] to-white/[0.03] backdrop-blur-2xl border border-white/20 shadow-[inset_0_1px_1.5px_rgba(255,255,255,0.3),0_15px_35px_rgba(0,0,0,0.35)] transition-all text-white space-y-4">
+      {/* Specular Top Rim Highlight */}
+      <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none z-10" />
 
-          <div className="flex items-center justify-end gap-1.5">
-            <button
-              onClick={() => setShowPlannerModal(true)}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-300 text-[11px] font-bold font-mono hover:bg-purple-900/60 transition-all active:scale-95 shadow-sm"
-            >
-              <Wand2 className="w-3 h-3 text-purple-400" />
-              <span>AI Planner</span>
-            </button>
-
-            <button
-              onClick={handleOpenManualAddModal}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold font-mono hover:bg-emerald-900/60 transition-all active:scale-95"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Add</span>
-            </button>
+      {/* Header Row: Title & Action Buttons */}
+      <div className="relative z-10 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-xl bg-white/10 border border-white/15 backdrop-blur-md flex items-center justify-center text-white/90 shadow-sm">
+            <Target className="w-3.5 h-3.5 stroke-[2]" />
+          </div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-xs sm:text-sm font-medium tracking-wide text-white/90">
+              Missions
+            </h3>
+            <span className="text-[11px] font-sans text-white/50">
+              {completedCount}/{totalCount}
+            </span>
           </div>
         </div>
 
-        {/* Progress Bar */}
-        <div className="w-full h-2.5 bg-[#181818] rounded-full overflow-hidden border border-white/5">
+        {/* Top Right Actions */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleOpenCreateModal}
+            className="h-7 px-3 rounded-xl bg-orange-500 hover:bg-orange-400 active:scale-95 text-white text-xs font-semibold backdrop-blur-md shadow-[0_4px_14px_rgba(249,115,22,0.4)] flex items-center gap-1 transition-all cursor-pointer"
+            title="Create New Mission"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>New</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Minimal Filter Tabs & Progress Indicator */}
+      <div className="relative z-10 space-y-2">
+        <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-none">
+          <button
+            type="button"
+            onClick={() => setActiveFilter('active')}
+            className={`px-3 py-1 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer ${
+              activeFilter === 'active'
+                ? 'bg-white/20 text-white font-semibold shadow-sm'
+                : 'text-white/50 hover:text-white/80 hover:bg-white/5'
+            }`}
+          >
+            Active ({activeWorkingMissions.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveFilter('planned')}
+            className={`px-3 py-1 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer ${
+              activeFilter === 'planned'
+                ? 'bg-white/20 text-white font-semibold shadow-sm'
+                : 'text-white/50 hover:text-white/80 hover:bg-white/5'
+            }`}
+          >
+            Planned ({plannedMissions.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveFilter('completed')}
+            className={`px-3 py-1 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer ${
+              activeFilter === 'completed'
+                ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 font-semibold shadow-sm'
+                : 'text-white/50 hover:text-white/80 hover:bg-white/5'
+            }`}
+          >
+            Done ({completedCount})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveFilter('missed')}
+            className={`px-3 py-1 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer ${
+              activeFilter === 'missed'
+                ? 'bg-rose-500/25 text-rose-300 border border-rose-500/40 font-semibold shadow-sm'
+                : 'text-white/50 hover:text-white/80 hover:bg-white/5'
+            }`}
+          >
+            Missed ({missedMissions.length})
+          </button>
+        </div>
+
+        {/* Slim Progress Bar */}
+        <div className="w-full h-1 bg-black/30 rounded-full overflow-hidden border border-white/5">
           <div
-            className="h-full bg-gradient-to-r from-[#a855f7] via-[#3b82f6] to-[#00e599] transition-all duration-500 rounded-full"
-            style={{ width: `${completionPercentage}%` }}
+            className="h-full bg-white/80 rounded-full transition-all duration-500 ease-out"
+            style={{ width: `${Math.min(100, Math.max(0, completionPercentage))}%` }}
           />
         </div>
       </div>
 
-      {/* Active Missions List with Slide-Away Animation */}
-      <div className="space-y-3.5">
-        <AnimatePresence mode="popLayout">
-          {activeMissions.length > 0 ? (
-            activeMissions.map((mission) => renderMissionCard(mission))
-          ) : (
-            <motion.div
-              key="all-completed"
-              initial={{ opacity: 0, scale: 0.96, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-              className="relative overflow-hidden bg-gradient-to-b from-[#0d281e]/80 via-black/90 to-black/90 border border-emerald-500/30 rounded-[28px] p-7 sm:p-8 text-center space-y-4 shadow-[0_16px_40px_rgba(0,229,153,0.12)]"
+      {/* Morphing Mission Cards Stack */}
+      <div className="relative z-10 py-1">
+        {displayedMissions.length > 0 ? (
+          <MorphingCardStack
+            cards={displayedMissions.map((m) => {
+              const catDef = getCategoryDefinition(m.category, customCategories);
+              const isCompleted = m.state === 'COMPLETED' || m.completed;
+              const isActive = m.state === 'ACTIVE';
+              const isMissed = m.state === 'MISSED';
+
+              return {
+                id: m.id,
+                title: m.title,
+                description: m.description || `${m.durationMinutes || 25}m session • ${m.targetAttribute || 'Focus'}`,
+                icon: renderCategoryIcon(catDef?.iconName, "w-4.5 h-4.5 text-white/95"),
+                headerAction: onDeleteMission ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMissionToDelete(m);
+                    }}
+                    title="Delete Mission"
+                    className="h-6 w-6 rounded-md hover:bg-rose-500/20 text-white/40 hover:text-rose-300 flex items-center justify-center transition-colors cursor-pointer active:scale-95"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                ) : undefined,
+                color: isCompleted
+                  ? 'rgba(16, 185, 129, 0.12)'
+                  : isActive
+                  ? 'rgba(255, 255, 255, 0.05)'
+                  : isMissed
+                  ? 'rgba(244, 63, 94, 0.12)'
+                  : undefined,
+                footer: (
+                  <div className="w-full flex items-center justify-between gap-2 px-0.5" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-1.5 text-xs shrink-0">
+                      <span className="font-mono font-medium text-white/90 text-[11px] px-2 py-0.5 rounded-md bg-white/10 border border-white/10 shrink-0">
+                        +{m.xpReward || 50} XP
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {/* Focus Session Trigger */}
+                      {onStartFocusSession && !isCompleted && (
+                        <button
+                          type="button"
+                          onClick={() => handleStartMissionFocus(m)}
+                          title="Start Focus Session"
+                          className="h-7 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-white flex items-center gap-1 text-[11px] font-medium transition-colors cursor-pointer active:scale-95"
+                        >
+                          <Play className="w-3 h-3 fill-current text-white/90" />
+                          <span>{isActive ? 'Resume' : 'Focus'}</span>
+                        </button>
+                      )}
+
+                      {/* Complete Checkbox Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleSetState(m.id, isCompleted ? 'PLANNED' : 'COMPLETED')}
+                        className={`h-7 px-2.5 rounded-lg border text-[11px] font-medium transition-colors flex items-center gap-1 cursor-pointer active:scale-95 ${
+                          isCompleted
+                            ? 'bg-emerald-500/25 text-emerald-200 border-emerald-500/40 hover:bg-emerald-500/35'
+                            : 'bg-white/10 text-white/90 border-white/15 hover:bg-white/20 hover:text-white'
+                        }`}
+                      >
+                        <Check className="w-3 h-3 stroke-[2.5]" />
+                        <span>{isCompleted ? 'Done' : 'Complete'}</span>
+                      </button>
+                    </div>
+                  </div>
+                ),
+              };
+            })}
+            defaultLayout="stack"
+            onCardClick={(card) => {
+              const found = displayedMissions.find((m) => m.id === card.id);
+              if (found) {
+                handleOpenEditModal(found);
+              }
+            }}
+          />
+        ) : (
+          <div className="rounded-2xl border border-white/10 bg-[#14151a] p-5 text-center space-y-3 text-white">
+            <div className="w-8 h-8 rounded-xl border border-white/10 flex items-center justify-center bg-white/5 text-white/70 mx-auto">
+              {activeFilter === 'missed' ? (
+                <XCircle className="w-4 h-4 text-rose-400" />
+              ) : (
+                <Check className="w-4 h-4 text-white/80" />
+              )}
+            </div>
+            <div className="space-y-0.5">
+              <h4 className="text-white font-medium text-xs sm:text-sm">
+                {activeFilter === 'completed'
+                  ? 'No missions completed today'
+                  : activeFilter === 'missed'
+                  ? 'No missed missions today'
+                  : activeFilter === 'active'
+                  ? 'No active missions'
+                  : 'No planned missions for today'}
+              </h4>
+              {activeFilter !== 'completed' && activeFilter !== 'missed' && (
+                <p className="text-[11px] text-white/40 max-w-xs mx-auto font-light leading-relaxed">
+                  {activeFilter === 'active'
+                    ? 'Nothing currently in progress.'
+                    : 'Add a new mission to plan your day.'}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-0.5">
+              {activeFilter !== 'missed' && activeFilter !== 'completed' && (
+                <button
+                  type="button"
+                  onClick={handleOpenCreateModal}
+                  className="bg-white/10 hover:bg-white/15 text-white font-medium text-xs px-3 py-1.5 rounded-lg border border-white/10 inline-flex items-center gap-1.5 transition-colors cursor-pointer active:scale-98"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New mission</span>
+                </button>
+              )}
+              {(activeFilter === 'completed' || activeFilter === 'missed') && onOpenArchive && (
+                <button
+                  type="button"
+                  onClick={onOpenArchive}
+                  className="bg-white/10 hover:bg-white/15 text-white/90 hover:text-white font-medium text-xs px-3 py-1.5 rounded-lg border border-white/10 inline-flex items-center gap-1.5 transition-colors cursor-pointer active:scale-98"
+                >
+                  <Archive className="w-3.5 h-3.5 text-white/60" />
+                  <span>View Archive</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Subtle Footer hint when viewing Done or Missed tab with items */}
+        {(activeFilter === 'completed' || activeFilter === 'missed') && displayedMissions.length > 0 && onOpenArchive && (
+          <div className="pt-2 text-center">
+            <button
+              type="button"
+              onClick={onOpenArchive}
+              className="text-[11px] text-white/50 hover:text-white/80 transition-colors font-sans inline-flex items-center gap-1 cursor-pointer"
             >
-              {/* Ambient Glow */}
-              <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-48 h-24 bg-emerald-500/15 rounded-full blur-2xl pointer-events-none" />
-
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-[#00e599] flex items-center justify-center mx-auto shadow-inner relative z-10">
-                <Check className="w-6 h-6 stroke-[2.5]" />
-              </div>
-
-              <div className="space-y-2 max-w-sm mx-auto relative z-10">
-                <h4 className="text-white font-bold text-xl sm:text-2xl tracking-tight">
-                  Today's work is done.
-                </h4>
-                <p className="text-sm text-emerald-200/85 font-light leading-relaxed">
-                  Take a moment to appreciate that you showed up.
-                </p>
-                <p className="text-xs font-light text-neutral-400 pt-1 tracking-wider uppercase">
-                  See you tomorrow.
-                </p>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              <span>Looking for past days? View Archive</span>
+              <span>→</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Completed Missions Section */}
-      {completedMissions.length > 0 && (
-        <div className="pt-2 space-y-3">
-          <button
-            onClick={() => setShowCompleted(!showCompleted)}
-            className="w-full py-2 px-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-light text-neutral-300 flex items-center justify-between transition-all"
-          >
-            <span className="flex items-center gap-2">
-              <Check className="w-3.5 h-3.5 text-[#00e599]" />
-              <span>Completed ({completedMissions.length})</span>
-            </span>
-            {showCompleted ? <ChevronUp className="w-4 h-4 text-neutral-400" /> : <ChevronDown className="w-4 h-4 text-neutral-400" />}
-          </button>
-
+      {/* EXPANSIVE OBSIDIAN MISSION CREATOR / EDITOR MODAL WITH FROSTED BACKDROP */}
+      {typeof document !== 'undefined' &&
+        createPortal(
           <AnimatePresence>
-            {showCompleted && (
+            {showAddModal && (
               <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="space-y-3.5 overflow-hidden"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="fixed inset-0 z-[99999] bg-black/65 backdrop-blur-xl flex items-center justify-center p-3 sm:p-6 md:p-8 select-none overflow-y-auto"
+                onClick={() => {
+                  setShowAddModal(false);
+                  setEditingMission(null);
+                }}
               >
-                {completedMissions.map((mission) => renderMissionCard(mission, true))}
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: 16 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: 12 }}
+                  transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="relative w-full max-w-2xl max-h-[88vh] bg-black border border-white/15 rounded-[28px] sm:rounded-[32px] text-white flex flex-col shadow-[0_24px_70px_rgba(0,0,0,0.95)] backdrop-blur-2xl overflow-hidden my-auto"
+                >
+                  {/* Specular Rim Line */}
+                  <div className="absolute top-0 inset-x-10 h-[1px] bg-gradient-to-r from-transparent via-white/25 to-transparent pointer-events-none z-30" />
+
+                  {/* Top Header Bar inside rounded container */}
+                  <div className="sticky top-0 z-20 bg-black/95 backdrop-blur-xl border-b border-white/10 px-5 sm:px-7 py-3.5 sm:py-4 flex items-center justify-between flex-shrink-0">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAddModal(false);
+                          setEditingMission(null);
+                        }}
+                        className="h-8.5 px-3 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 flex items-center gap-2 text-zinc-300 hover:text-white transition-all active:scale-95 cursor-pointer text-xs font-sans"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Back</span>
+                      </button>
+                      <div>
+                        <h1 className="text-sm sm:text-base font-semibold text-white tracking-tight flex items-center gap-2">
+                          <Target className="w-4 h-4 text-zinc-300" />
+                          <span>{editingMission ? 'Edit Mission' : 'New Mission'}</span>
+                        </h1>
+                        <p className="text-[11px] text-zinc-400 hidden sm:block font-normal">
+                          {editingMission ? 'Update mission details and time' : 'Set a clear goal for today'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAddModal(false);
+                          setEditingMission(null);
+                        }}
+                        className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white transition-all active:scale-90 cursor-pointer"
+                        aria-label="Close"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Scrollable Form Body Container */}
+                  <div className="overflow-y-auto custom-scrollbar p-5 sm:p-7 space-y-6 flex-1 text-left">
+                    <form onSubmit={handleSaveMissionForm} className="space-y-5">
+                      {/* 1. Objective Card */}
+                      <div className="bg-zinc-950/80 border border-white/10 rounded-2xl p-4.5 sm:p-5 space-y-3.5 backdrop-blur-xl relative overflow-hidden">
+                        <div className="absolute top-0 inset-x-6 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-sans font-medium text-zinc-400 uppercase tracking-wider block">
+                            Mission title
+                          </label>
+                          <textarea
+                            ref={(el) => {
+                              if (el) {
+                                el.style.height = 'auto';
+                                el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+                              }
+                            }}
+                            required
+                            autoFocus
+                            rows={2}
+                            placeholder="What are you doing?"
+                            value={formTitle}
+                            onChange={(e) => {
+                              setFormTitle(e.target.value);
+                              e.target.style.height = 'auto';
+                              e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
+                            }}
+                            className="w-full bg-black/60 border border-white/10 focus:border-white/30 rounded-xl px-4 py-2.5 text-sm sm:text-base text-white placeholder-zinc-500 outline-none transition-all font-sans resize-none leading-snug max-h-[140px] custom-scrollbar overflow-y-auto block"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-sans font-medium text-zinc-400 uppercase tracking-wider block">
+                            Notes <span className="text-zinc-500 lowercase">(optional)</span>
+                          </label>
+                          <textarea
+                            rows={2}
+                            placeholder="Add any notes, links, or details..."
+                            value={formDesc}
+                            onChange={(e) => {
+                              setFormDesc(e.target.value);
+                              e.target.style.height = 'auto';
+                              e.target.style.height = `${Math.max(44, Math.min(e.target.scrollHeight, 140))}px`;
+                            }}
+                            className="w-full bg-black/60 border border-white/10 focus:border-white/30 rounded-xl px-4 py-2 text-xs sm:text-sm text-white placeholder-zinc-500 outline-none transition-all resize-none font-sans leading-relaxed min-h-[44px] max-h-[140px] custom-scrollbar"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 2. Priority Selector Card */}
+                      <div className="bg-zinc-950/80 border border-white/10 rounded-2xl p-4.5 sm:p-5 space-y-3 backdrop-blur-xl relative overflow-hidden">
+                        <div className="absolute top-0 inset-x-6 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
+                        <label className="text-xs font-sans font-medium text-zinc-400 uppercase tracking-wider block">
+                          Priority
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          {(
+                            [
+                              { id: 'PRIMARY', label: 'Top priority', desc: 'Must get done today', xp: '+50 XP' },
+                              { id: 'SECONDARY', label: 'Secondary', desc: 'Important if time permits', xp: '+30 XP' },
+                              { id: 'BONUS', label: 'Bonus', desc: 'Nice to have done', xp: '+20 XP' },
+                            ] as const
+                          ).map((p) => {
+                            const isSelected = formPriority === p.id;
+                            return (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => setFormPriority(p.id)}
+                                className={`flex flex-col items-start justify-between p-3 rounded-xl text-left transition-all border cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-white/15 border-white/30 text-white shadow-xs'
+                                    : 'bg-black/50 border-white/5 text-zinc-400 hover:text-white hover:bg-white/5 hover:border-white/10'
+                                }`}
+                              >
+                                <div className="w-full flex items-center justify-between">
+                                  <span className="font-semibold text-xs sm:text-sm text-white">{p.label}</span>
+                                  <span className="text-xs font-sans font-semibold text-zinc-200">{p.xp}</span>
+                                </div>
+                                <span className="text-[11px] text-zinc-400 mt-1">{p.desc}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* 3. Category Card */}
+                      <div className="bg-zinc-950/80 border border-white/10 rounded-2xl p-4.5 sm:p-5 space-y-3 backdrop-blur-xl relative overflow-hidden">
+                        <label className="text-xs font-sans font-medium text-zinc-400 uppercase tracking-wider block">
+                          Category
+                        </label>
+                        <CategoryPicker
+                          value={formCategory}
+                          onChange={(catName, attr) => {
+                            setFormCategory(catName);
+                            if (attr) setFormAttribute(attr);
+                          }}
+                          onCustomCategoriesChange={(updated) => setCustomCategories(updated)}
+                        />
+                      </div>
+
+                      {/* 4. Focus Duration Card */}
+                      <div className="bg-zinc-950/80 border border-white/10 rounded-2xl p-4.5 sm:p-5 space-y-3.5 backdrop-blur-xl relative overflow-hidden">
+                        <div className="absolute top-0 inset-x-6 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-sans font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-zinc-300" />
+                            <span>Duration</span>
+                          </label>
+                        </div>
+
+                        {/* Preset Pills */}
+                        <div className="grid grid-cols-5 gap-2 w-full">
+                          {[5, 15, 25, 45, 60].map((mins) => {
+                            const isSelected = formDuration === mins;
+                            return (
+                              <button
+                                key={mins}
+                                type="button"
+                                onClick={() => setFormDuration(mins)}
+                                className={`py-2 rounded-xl text-xs font-medium transition-all active:scale-95 cursor-pointer text-center ${
+                                  isSelected
+                                    ? 'bg-white/20 border border-white/30 text-white font-semibold shadow-xs'
+                                    : 'bg-black/50 hover:bg-white/5 border border-white/10 text-zinc-300'
+                                }`}
+                              >
+                                {mins}m
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Custom Stepper */}
+                        <div className="w-full p-2.5 rounded-xl bg-black/60 border border-white/10 focus-within:border-white/25 transition-all flex items-center justify-between gap-2.5">
+                          <button
+                            type="button"
+                            onClick={() => setFormDuration(Math.max(5, formDuration - 5))}
+                            className="w-9 h-9 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-white/80 hover:text-white flex items-center justify-center transition-all active:scale-90 cursor-pointer flex-shrink-0"
+                            title="Subtract 5 minutes"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+
+                          <div className="flex-1 h-9 relative flex items-center justify-center bg-black/60 border border-white/10 focus-within:border-white/25 rounded-lg px-3">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <input
+                                type="number"
+                                min={5}
+                                max={360}
+                                step={5}
+                                value={formDuration}
+                                onChange={(e) => setFormDuration(Math.max(5, Number(e.target.value) || 5))}
+                                className="w-12 bg-transparent text-center text-sm font-sans font-bold text-white outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                              <span className="text-xs font-sans text-zinc-400 select-none">minutes</span>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setFormDuration(Math.min(360, formDuration + 5))}
+                            className="w-9 h-9 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-white/80 hover:text-white flex items-center justify-center transition-all active:scale-90 cursor-pointer flex-shrink-0"
+                            title="Add 5 minutes"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 5. Schedule & Mission State */}
+                      <div className="bg-zinc-950/80 border border-white/10 rounded-2xl p-4.5 sm:p-5 space-y-3.5 backdrop-blur-xl relative overflow-hidden">
+                        <div className="absolute top-0 inset-x-6 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
+                        <label className="text-xs font-sans font-medium text-zinc-400 uppercase tracking-wider block">
+                          Schedule & Status
+                        </label>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div>
+                            <label className="text-[11px] font-sans text-zinc-400 block mb-1">
+                              Due Date
+                            </label>
+                            <input
+                              type="date"
+                              value={formDueDate}
+                              onChange={(e) => setFormDueDate(e.target.value)}
+                              className="w-full bg-black/60 border border-white/10 focus:border-white/30 rounded-xl px-3 py-2 text-xs sm:text-sm text-white outline-none font-sans"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] font-sans block mb-1">
+                              <span className={isFormDueTimePast ? 'text-rose-400 font-semibold inline-flex items-center gap-1.5' : 'text-zinc-400'}>
+                                Due Time
+                                {isFormDueTimePast && <Clock className="w-3.5 h-3.5 text-rose-400 stroke-[2.5]" />}
+                              </span>
+                            </label>
+                            <div className="relative">
+                              <input
+                                type="time"
+                                value={formDueTime}
+                                onChange={(e) => setFormDueTime(e.target.value)}
+                                className={`w-full bg-black/60 rounded-xl px-3 py-2 text-xs sm:text-sm outline-none font-sans transition-all ${
+                                  isFormDueTimePast
+                                    ? 'border border-rose-500/60 text-rose-300 focus:border-rose-400 focus:ring-1 focus:ring-rose-500/30 pr-8 bg-rose-500/10 font-semibold'
+                                    : 'border border-white/10 focus:border-white/30 text-white'
+                                }`}
+                              />
+                              {isFormDueTimePast && (
+                                <Clock className="w-4 h-4 text-rose-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none stroke-[2.5]" />
+                              )}
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[11px] font-sans text-zinc-400 block mb-1">
+                              State
+                            </label>
+                            <select
+                              value={isFormDueTimePast ? 'MISSED' : formState}
+                              onChange={(e) => setFormState(e.target.value as MissionState)}
+                              disabled={isFormDueTimePast}
+                              className={`w-full bg-black/60 border rounded-xl px-3 py-2 text-xs sm:text-sm outline-none font-sans ${
+                                isFormDueTimePast
+                                  ? 'border-rose-500/40 text-rose-300 bg-rose-500/10 cursor-not-allowed opacity-90'
+                                  : 'border-white/10 focus:border-white/30 text-white'
+                              }`}
+                            >
+                              <option value="ACTIVE">Active (Default)</option>
+                              <option value="PLANNED">Planned</option>
+                              <option value="COMPLETED">Completed</option>
+                              <option value="MISSED">Missed</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Past due time warning indicator */}
+                        {isFormDueTimePast && (
+                          <div className="flex items-center gap-2 p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-sans animate-in fade-in">
+                            <Clock className="w-4 h-4 text-rose-400 shrink-0 stroke-[2.5]" />
+                            <span>
+                              Scheduled due time is in the past. Creating this mission will immediately classify it as <strong className="text-rose-200">Missed</strong>.
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Bottom Action Footer */}
+                      <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAddModal(false);
+                            setEditingMission(null);
+                          }}
+                          className="px-4 py-2.5 rounded-xl text-xs font-medium text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-all cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={!formTitle.trim()}
+                          className="px-5 py-2.5 rounded-xl bg-white hover:bg-zinc-200 disabled:opacity-40 disabled:pointer-events-none text-zinc-950 text-xs font-semibold flex items-center gap-2 shadow-xs transition-all cursor-pointer active:scale-95"
+                        >
+                          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>{editingMission ? 'Save changes' : 'Add mission'}</span>
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </motion.div>
               </motion.div>
             )}
-          </AnimatePresence>
-        </div>
-      )}
+          </AnimatePresence>,
+          document.body
+        )}
 
-      {/* Add Custom Mission Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-2xl">
-          <div className="bg-[#121212]/90 backdrop-blur-2xl border border-white/20 rounded-3xl p-5 w-full max-w-sm space-y-4 shadow-[0_16px_40px_rgba(0,0,0,0.6)]">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Target className="w-4 h-4 text-emerald-400" />
-              {pendingGeneratedIndex !== null ? 'Configure & Add Mission' : 'Add Daily Mission'}
-            </h3>
-
-            <form onSubmit={handleCreateMission} className="space-y-3">
-              <div>
-                <label className="text-xs font-mono text-neutral-400 uppercase block mb-1">
-                  Mission Title
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Complete high-impact task"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-mono text-neutral-400 uppercase block mb-1">
-                  Description
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="Objective with zero distractions..."
-                  value={newDesc}
-                  onChange={(e) => setNewDesc(e.target.value)}
-                  className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-mono text-neutral-400 uppercase block mb-1">
-                  Benefits Attribute
-                </label>
-                <select
-                  value={newAttribute}
-                  onChange={(e) => setNewAttribute(e.target.value)}
-                  className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                >
-                  {CORE_ATTRIBUTES.map((attr) => (
-                    <option key={attr} value={attr}>
-                      {attr}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-mono text-neutral-400 uppercase block mb-1">
-                    Priority
-                  </label>
-                  <select
-                    value={newType}
-                    onChange={(e) => setNewType(e.target.value as any)}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="PRIMARY">PRIMARY (+50 XP)</option>
-                    <option value="SECONDARY">SECONDARY (+30 XP)</option>
-                    <option value="BONUS">BONUS (+25 XP)</option>
-                  </select>
+      {/* DELETE CONFIRMATION MODAL */}
+      {missionToDelete &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-[99999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-[#1a1d24]/95 border border-white/20 rounded-[28px] p-6 max-w-sm w-full space-y-4 shadow-[0_25px_60px_rgba(0,0,0,0.85)] relative text-left">
+              <div className="flex items-center gap-3 text-rose-400">
+                <div className="w-10 h-10 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center flex-shrink-0">
+                  <Trash2 className="w-5 h-5 text-rose-400" />
                 </div>
-
                 <div>
-                  <label className="text-xs font-mono text-neutral-400 uppercase block mb-1">
-                    Est. Duration (Timer)
-                  </label>
-                  <div className="relative flex items-center">
-                    <input
-                      type="number"
-                      min={5}
-                      max={180}
-                      step={5}
-                      value={newDurationMinutes}
-                      onChange={(e) => setNewDurationMinutes(Number(e.target.value))}
-                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2 pr-10 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono"
-                    />
-                    <span className="absolute right-3 text-xs font-mono text-neutral-500 pointer-events-none">
-                      m
-                    </span>
-                  </div>
+                  <h3 className="font-semibold text-white text-base">Delete mission</h3>
+                  <p className="text-xs text-white/60">This will remove this mission from your list.</p>
                 </div>
               </div>
+
+              <p className="text-sm text-white/80 leading-relaxed font-sans">
+                Are you sure you want to delete <span className="font-semibold text-white">"{missionToDelete.title}"</span>?
+              </p>
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowAddModal(false);
-                    setPendingGeneratedIndex(null);
-                  }}
-                  className="px-3 py-1.5 rounded-xl text-xs font-mono text-neutral-400 hover:text-white"
+                  onClick={() => setMissionToDelete(null)}
+                  className="px-4 py-2 rounded-full text-xs font-sans text-white/70 bg-white/5 hover:bg-white/10 border border-white/10"
                 >
                   Cancel
                 </button>
                 <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs shadow-md transition-all active:scale-95"
-                >
-                  {pendingGeneratedIndex !== null ? 'Approve & Add' : 'Save Mission'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* AI Mission Planner Modal */}
-      {showPlannerModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-2xl animate-in fade-in overflow-y-auto max-h-screen">
-          <div className="bg-neutral-950/95 border border-white/10 rounded-3xl p-5 md:p-6 w-full max-w-lg space-y-5 shadow-2xl relative text-left my-auto">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-white/10">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
-                  <Wand2 className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white tracking-wide">AI Mission Planner</h3>
-                  <p className="text-[11px] text-neutral-400 font-mono">Turn vague goals into concrete micro-sprints</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowPlannerModal(false)}
-                className="text-neutral-400 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Input Area */}
-            <div className="space-y-3">
-              <div className="relative">
-                <input
-                  type="text"
-                  value={intentionInput}
-                  onChange={(e) => setIntentionInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleSynthesizeIntention();
-                    }
-                  }}
-                  placeholder='Enter a goal (e.g. "Work on website", "Study for exam")'
-                  className="w-full bg-black/50 border border-white/10 focus:border-purple-500/50 rounded-2xl px-4 py-3 text-xs text-white placeholder-neutral-500 outline-none transition-all pr-24 font-sans shadow-inner"
-                />
-                <button
                   type="button"
-                  onClick={() => handleSynthesizeIntention()}
-                  disabled={isSynthesizing || !intentionInput.trim()}
-                  className="absolute right-1.5 top-1.5 bottom-1.5 px-3.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white font-bold text-xs font-mono flex items-center gap-1.5 transition-all active:scale-95 shadow-md"
+                  onClick={() => {
+                    if (onDeleteMission && missionToDelete) {
+                      onDeleteMission(missionToDelete.id);
+                    }
+                    setMissionToDelete(null);
+                  }}
+                  className="px-4 py-2 rounded-full bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs shadow-md transition-all active:scale-95"
                 >
-                  {isSynthesizing ? (
-                    <span className="animate-pulse text-[11px]">Planning...</span>
-                  ) : (
-                    <>
-                      <Wand2 className="w-3.5 h-3.5" />
-                      <span>Plan</span>
-                    </>
-                  )}
+                  Delete mission
                 </button>
               </div>
-
-              {/* Generated Missions Breakdown */}
-              {generatedMissions.length > 0 && (
-                <div className="space-y-3 pt-3 border-t border-white/10">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-mono text-purple-300 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      Suggested Missions ({generatedMissions.length})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleApproveAllGenerated}
-                      className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 font-bold uppercase underline"
-                    >
-                      Approve & Add All
-                    </button>
-                  </div>
-
-                  <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
-                    {generatedMissions.map((gen, idx) => (
-                      <div
-                        key={idx}
-                        className="p-3.5 rounded-2xl bg-black/40 border border-white/10 hover:border-purple-500/30 transition-all relative flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                      >
-                        {/* Left side: Title & Tags */}
-                        <div
-                          className="space-y-1.5 min-w-0 flex-1 cursor-pointer"
-                          onClick={() => handleOpenAddModalForGenerated(gen, idx)}
-                        >
-                          <h4 className="text-xs font-bold text-white tracking-tight flex items-center gap-1.5 hover:text-purple-300 transition-colors">
-                            <ArrowRight className="w-3 h-3 text-purple-400 flex-shrink-0" />
-                            <span>{gen.title}</span>
-                          </h4>
-
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span
-                              className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-lg border uppercase ${
-                                gen.type === 'PRIMARY'
-                                  ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                                  : gen.type === 'SECONDARY'
-                                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                              }`}
-                            >
-                              {gen.type === 'PRIMARY' ? 'High' : gen.type === 'SECONDARY' ? 'Medium' : 'Low'}
-                            </span>
-                            <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded-lg border border-cyan-500/20">
-                              {gen.suggestedFocusMinutes || gen.durationMinutes}m
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Right side: Actions (Edit & Approve & Add open full edit page) */}
-                        <div className="flex items-center gap-1.5 flex-shrink-0 self-end sm:self-center ml-auto">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenAddModalForGenerated(gen, idx)}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-all"
-                            title="Configure mission parameters"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenAddModalForGenerated(gen, idx)}
-                            className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 text-[11px] font-mono font-bold border border-emerald-500/30 flex items-center gap-1.5 transition-all active:scale-95 whitespace-nowrap"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Approve & Add</span>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
-
-            {/* Collapsible 3 Recommended Daily Missions */}
-            <div className="border border-white/10 rounded-2xl bg-black/40 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowRecommendedStack(!showRecommendedStack)}
-                className="w-full p-3 flex items-center justify-between text-xs font-mono font-bold text-neutral-300 hover:text-white hover:bg-white/5 transition-all text-left"
-              >
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Standard System Recommendations (3 Missions)</span>
-                </div>
-                {showRecommendedStack ? (
-                  <ChevronUp className="w-4 h-4 text-neutral-400" />
-                ) : (
-                  <ChevronDown className="w-4 h-4 text-neutral-400" />
-                )}
-              </button>
-
-              <AnimatePresence>
-                {showRecommendedStack && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="p-3 pt-0 space-y-3 border-t border-white/5"
-                  >
-                    {!isDataSufficient ? (
-                      <p className="text-[11px] text-amber-300 font-mono pt-2">
-                        ⚡ Baseline Mode (Day {daysOfData}/3): Initial baseline trio.
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-neutral-400 font-mono pt-2">
-                        Tailored stack based on rolling performance data:
-                      </p>
-                    )}
-
-                    <div className="space-y-2">
-                      {RECOMMENDED_TRIO.map((rec, i) => (
-                        <div
-                          key={i}
-                          className="p-2.5 rounded-xl bg-black/60 border border-purple-500/20 hover:border-purple-500/40 transition-all space-y-1 relative"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[9px] font-mono font-bold text-purple-300 bg-purple-500/15 px-2 py-0.5 rounded border border-purple-500/30 uppercase">
-                                {rec.type}
-                              </span>
-                              <span className="text-[10px] font-mono text-neutral-400">
-                                {rec.durationMinutes}m · +{rec.xpReward} XP
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onAddMission(rec);
-                                playMicroWinTone();
-                              }}
-                              className="px-2 py-0.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/35 text-purple-200 text-[10px] font-mono font-bold border border-purple-500/30 flex items-center gap-1 transition-all active:scale-95 flex-shrink-0"
-                            >
-                              <Plus className="w-3 h-3" />
-                              <span>Add</span>
-                            </button>
-                          </div>
-                          <h4 className="text-xs font-bold text-white tracking-tight">{rec.title}</h4>
-                          <p className="text-[11px] text-neutral-400 leading-snug">{rec.description}</p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleInstantiateAllMissions}
-                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-500 via-cyan-400 to-emerald-400 hover:brightness-110 text-black font-extrabold text-xs transition-all shadow-md flex items-center justify-center gap-1.5 active:scale-98"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 fill-black" />
-                      <span>Instantiate All 3 Standard Missions</span>
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            <div className="pt-1">
-              <button
-                type="button"
-                onClick={() => setShowPlannerModal(false)}
-                className="w-full py-2 text-center text-xs font-mono text-neutral-400 hover:text-white"
-              >
-                Close Planner
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Remove Mission Confirmation Modal */}
-      {missionToDelete && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-neutral-900 border border-white/10 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl relative">
-            <div className="flex items-center gap-3 text-red-400">
-              <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center flex-shrink-0">
-                <Trash2 className="w-5 h-5 text-red-400" />
-              </div>
-              <div>
-                <h3 className="font-bold text-white text-base">Remove Mission</h3>
-                <p className="text-xs text-neutral-400">This action cannot be undone.</p>
-              </div>
-            </div>
-
-            <p className="text-sm text-neutral-300 leading-relaxed">
-              Are you sure you want to remove <span className="font-semibold text-white">"{missionToDelete.title}"</span>?
-            </p>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setMissionToDelete(null)}
-                className="px-4 py-2 rounded-xl text-xs font-mono font-bold text-neutral-300 bg-white/5 hover:bg-white/10 border border-white/5 transition-all"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (onDeleteMission && missionToDelete) {
-                    onDeleteMission(missionToDelete.id);
-                  }
-                  setMissionToDelete(null);
-                }}
-                className="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-xs shadow-md transition-all active:scale-95"
-              >
-                Remove Mission
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </section>
+          </div>,
+          document.body
+        )}
+    </div>
   );
 };
-
